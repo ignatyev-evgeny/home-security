@@ -13,7 +13,11 @@ services:
     container_name: frigate
     restart: unless-stopped
     stop_grace_period: 30s
-    shm_size: "512mb"
+    # Frigate держит декодированные кадры в /dev/shm, и объём зависит от
+    # разрешения detect-потоков: на камеру нужно (w*h*1.5*9 + 270480) байт.
+    # Семь камер в полном разрешении дают ~212 МБ кадров, остальное — кэш
+    # записей. Это tmpfs: память занимается по мере использования, не сразу.
+    shm_size: "1gb"
     depends_on:
       - mosquitto
     devices:
