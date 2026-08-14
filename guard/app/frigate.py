@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import httpx
@@ -117,7 +118,16 @@ class FrigateClient:
     async def raw_config(self) -> str:
         response = await self.request("GET", "/api/config/raw")
         response.raise_for_status()
-        return response.text
+        text = response.text
+        # Frigate 0.17 отдаёт конфиг JSON-строкой, версии до неё — сырым YAML.
+        # Без этого разбора весь конфиг выглядит как один скаляр, и правка камер
+        # падает на попытке обратиться к ключу cameras.
+        if text.lstrip().startswith('"'):
+            try:
+                return json.loads(text)
+            except ValueError:
+                pass
+        return text
 
     async def save_config(self, raw_yaml: str, restart: bool = True) -> None:
         """Сохраняет конфиг через Frigate — он же его и валидирует.

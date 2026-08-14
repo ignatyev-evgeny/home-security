@@ -63,6 +63,8 @@ cameras:
   # Переименуй по комнатам: имя попадает в подпись к фото и в /cams.
   # Допустимы латиница в нижнем регистре, цифры и _.
   # Пароль подставляется Frigate из переменной окружения FRIGATE_RTSP_PASSWORD.
+  # detect и record на одном входе: один процесс ffmpeg, снимки в полном
+  # разрешении. На слабом железе вынеси detect на subtype=1 отдельным входом.
   cam_110:
     ffmpeg:
       inputs:
@@ -70,9 +72,6 @@ cameras:
           input_args: preset-rtsp-generic
           roles:
             - record
-        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.110:554/cam/realmonitor?channel=1&subtype=1'
-          input_args: preset-rtsp-generic
-          roles:
             - detect
 
   cam_111:
@@ -82,9 +81,6 @@ cameras:
           input_args: preset-rtsp-generic
           roles:
             - record
-        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.111:554/cam/realmonitor?channel=1&subtype=1'
-          input_args: preset-rtsp-generic
-          roles:
             - detect
 
   cam_112:
@@ -94,9 +90,6 @@ cameras:
           input_args: preset-rtsp-generic
           roles:
             - record
-        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.112:554/cam/realmonitor?channel=1&subtype=1'
-          input_args: preset-rtsp-generic
-          roles:
             - detect
 
   cam_113:
@@ -106,9 +99,6 @@ cameras:
           input_args: preset-rtsp-generic
           roles:
             - record
-        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.113:554/cam/realmonitor?channel=1&subtype=1'
-          input_args: preset-rtsp-generic
-          roles:
             - detect
 
   cam_115:
@@ -118,9 +108,6 @@ cameras:
           input_args: preset-rtsp-generic
           roles:
             - record
-        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.115:554/cam/realmonitor?channel=1&subtype=1'
-          input_args: preset-rtsp-generic
-          roles:
             - detect
 
   cam_120:
@@ -130,7 +117,4 @@ cameras:
           input_args: preset-rtsp-generic
           roles:
             - record
-        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.120:554/cam/realmonitor?channel=1&subtype=1'
-          input_args: preset-rtsp-generic
-          roles:
             - detect

@@ -20,6 +20,22 @@ OFFLINE_STREAK = 3
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024
 
 
+def event_score(after: dict) -> float:
+    """Достаёт уверенность детекции из события.
+
+    Frigate 0.17 переложил score внутрь `data`, оставив на верхнем уровне
+    пустое поле. Без разбора обоих вариантов ненулевой alerts.min_score
+    отсекал бы вообще все события.
+    """
+    data = after.get("data") or {}
+    for source in (data, after):
+        for key in ("top_score", "score"):
+            value = source.get(key)
+            if value:
+                return float(value)
+    return 0.0
+
+
 def cameras_from_stats(stats: dict) -> dict[str, dict]:
     """Состояние камер из /api/stats.
 
@@ -112,7 +128,7 @@ class Guard:
         if not self._state.armed:
             return
 
-        score = float(after.get("top_score") or after.get("score") or 0.0)
+        score = event_score(after)
         if self._config.alerts.min_score and score < self._config.alerts.min_score:
             log.debug("[%s] %s score=%.2f ниже порога", camera, label, score)
             return

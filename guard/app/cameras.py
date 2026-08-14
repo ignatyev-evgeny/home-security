@@ -58,18 +58,25 @@ def add_camera(raw: str, name: str, host: str, defaults: CameraDefaults) -> str:
     if name in cameras:
         raise CameraEditError(f"камера «{name}» уже есть в конфиге")
 
-    record = CommentedMap()
-    record["path"] = SQ(rtsp_url(host, defaults.record_path, defaults))
-    record["input_args"] = "preset-rtsp-generic"
-    record["roles"] = ["record"]
+    def make_input(path: str, roles: list[str]) -> CommentedMap:
+        item = CommentedMap()
+        item["path"] = SQ(rtsp_url(host, path, defaults))
+        item["input_args"] = "preset-rtsp-generic"
+        item["roles"] = roles
+        return item
 
-    detect = CommentedMap()
-    detect["path"] = SQ(rtsp_url(host, defaults.detect_path, defaults))
-    detect["input_args"] = "preset-rtsp-generic"
-    detect["roles"] = ["detect"]
+    if defaults.record_path == defaults.detect_path:
+        # Один и тот же поток: два входа означали бы два процесса ffmpeg,
+        # читающих одно и то же.
+        inputs = [make_input(defaults.record_path, ["record", "detect"])]
+    else:
+        inputs = [
+            make_input(defaults.record_path, ["record"]),
+            make_input(defaults.detect_path, ["detect"]),
+        ]
 
     ffmpeg = CommentedMap()
-    ffmpeg["inputs"] = [record, detect]
+    ffmpeg["inputs"] = inputs
 
     camera = CommentedMap()
     camera["ffmpeg"] = ffmpeg
