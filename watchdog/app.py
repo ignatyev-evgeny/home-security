@@ -154,13 +154,24 @@ async def handle_heartbeat(request: web.Request) -> web.Response:
 
 
 async def handle_health(request: web.Request) -> web.Response:
+    """Состояние дома. Эндпоинт открыт в интернет, поэтому подробности — по токену.
+
+    Без него отдаём только «жив/не жив»: этого хватает любому аптайм-монитору,
+    а вот режим охраны и список неисправных камер — уже наводка на то, дома ли
+    хозяин и что именно не работает.
+    """
     watch: Watch = request.app["watch"]
     age = time.time() - watch.last_seen if watch.last_seen else None
+    public = {
+        "ok": not watch.site_down,
+        "age_seconds": round(age) if age is not None else None,
+    }
+    if AUTH_TOKEN and request.headers.get("X-Auth-Token") != AUTH_TOKEN:
+        return web.json_response(public)
     return web.json_response(
         {
-            "ok": not watch.site_down,
+            **public,
             "last_seen": watch.last_seen or None,
-            "age_seconds": round(age) if age is not None else None,
             "armed": watch.last_payload.get("armed"),
             "cameras_down": sorted(watch.cameras_down),
             "storage": watch.last_payload.get("storage"),

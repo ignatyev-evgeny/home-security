@@ -120,8 +120,25 @@ WATCHDOG_TOKEN=<тот же AUTH_TOKEN>
 curl -s https://watchdog.example.com/health
 ```
 
-Отдаёт `last_seen`, `age_seconds`, `armed` и список упавших камер — этот же
-эндпоинт можно скормить любому uptime-мониторингу.
+Без токена отдаёт только `ok` и `age_seconds` — этого хватает любому
+uptime-мониторингу. Подробности (режим охраны, упавшие камеры, свободное
+место) приходят лишь с заголовком `X-Auth-Token`: эндпоинт открыт в интернет,
+а «дом снят с охраны» — плохая вещь для публичного показа.
+
+```bash
+curl -s -H "X-Auth-Token: $AUTH_TOKEN" https://watchdog.example.com/health
+```
+
+На сервере с Traefik порт наружу не публикуется — скопируй оверлей и укажи
+домен в `.env`:
+
+```bash
+cp docker-compose.traefik.yml docker-compose.override.yml
+```
+
+```
+WATCHDOG_DOMAIN=watchdog.example.com
+```
 
 ## Что приходит в Telegram
 
