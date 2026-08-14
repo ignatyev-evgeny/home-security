@@ -71,16 +71,21 @@ def now_time(timezone: str) -> str:
     return datetime.now(ZoneInfo(timezone)).strftime("%d.%m %H:%M:%S")
 
 
-def status_text(config: Config, state: ArmState, health: dict[str, dict]) -> str:
+def status_text(config: Config, state: ArmState, health: dict[str, dict], storage: dict | None = None) -> str:
     head = "🔴 <b>Дом под охраной</b>" if state.armed else "🟢 <b>Охрана снята</b>"
     online = sum(1 for info in health.values() if info["online"])
     total = len(health)
     cams = f"{online}/{total} на связи" if total else "нет данных о камерах"
-    return (
-        f"{head}\n"
-        f"Изменено: {fmt_time(state.changed_at, config.timezone)} ({html.escape(state.changed_by)})\n"
-        f"Камеры: {cams} · пауза между алертами: {config.alerts.cooldown_seconds} с"
-    )
+    lines = [
+        head,
+        f"Изменено: {fmt_time(state.changed_at, config.timezone)} ({html.escape(state.changed_by)})",
+        f"Камеры: {cams} · пауза между алертами: {config.alerts.cooldown_seconds} с",
+    ]
+    free = (storage or {}).get("free_gb")
+    if free is not None:
+        mark = "⚠️" if config.alerts.min_free_gb and free < config.alerts.min_free_gb else "💾"
+        lines.append(f"{mark} Свободно под записи: {free} ГБ из {storage.get('total_gb', '?')} ГБ")
+    return "\n".join(lines)
 
 
 class Notifier:
@@ -142,7 +147,7 @@ def register_handlers(
 
     async def _panel(message: Message) -> None:
         await message.answer(
-            status_text(config, state, guard.camera_health),
+            status_text(config, state, guard.camera_health, guard.storage),
             reply_markup=build_keyboard(state.armed),
         )
 
@@ -239,7 +244,7 @@ def register_handlers(
         except Exception as exc:  # noqa: BLE001
             await message.answer(f"⚠️ Не получить конфиг Frigate: {html.escape(str(exc))}")
             return
-        await message.answer(admin.status_text(names, guard.camera_health, guard.frigate_ok))
+        await message.answer(admin.status_text(names, guard.camera_health, guard.frigate_ok, guard.storage))
 
     @dp.message(Command("addcam"))
     async def _addcam(message: Message, command: CommandObject) -> None:
@@ -303,7 +308,7 @@ def register_handlers(
         await callback.answer("Дом под охраной" if armed else "Охрана снята")
         try:
             await message.edit_text(
-                status_text(config, state, guard.camera_health),
+                status_text(config, state, guard.camera_health, guard.storage),
                 reply_markup=build_keyboard(armed),
             )
         except TelegramBadRequest as exc:
@@ -330,7 +335,7 @@ def register_handlers(
         except Exception as exc:  # noqa: BLE001
             await message.answer(f"⚠️ Не получить конфиг Frigate: {html.escape(str(exc))}")
             return
-        await message.answer(admin.status_text(names, guard.camera_health, guard.frigate_ok))
+        await message.answer(admin.status_text(names, guard.camera_health, guard.frigate_ok, guard.storage))
 
     @dp.callback_query(F.data == "delcam_no")
     async def _delcam_cancel(callback: CallbackQuery) -> None:

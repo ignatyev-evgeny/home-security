@@ -43,7 +43,8 @@ class CameraAdmin:
     async def names(self) -> list[str]:
         return cam_edit.list_cameras(await self._frigate.raw_config())
 
-    def status_text(self, names: list[str], health: dict[str, dict], frigate_ok: bool) -> str:
+    def status_text(self, names: list[str], health: dict[str, dict], frigate_ok: bool,
+                    storage: dict | None = None) -> str:
         if not names:
             return "Камер в конфиге нет."
         lines = ["<b>Камеры</b>"]
@@ -57,6 +58,9 @@ class CameraAdmin:
             else:
                 mark, detail = "🔴", "нет потока"
             lines.append(f"{mark} <code>{html.escape(name)}</code> — {detail}")
+        free = (storage or {}).get("free_gb")
+        if free is not None:
+            lines.append(f"\n💾 Свободно под записи: {free} ГБ из {storage.get('total_gb', '?')} ГБ")
         if not frigate_ok:
             lines.append("\n⚠️ Frigate не отвечает — данные могут быть устаревшими.")
         return "\n".join(lines)

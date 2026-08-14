@@ -27,6 +27,7 @@ async def run(settings: HeartbeatSettings, state: ArmState, guard) -> None:
                 "armed": state.armed,
                 "frigate_ok": guard.frigate_ok,
                 "cameras": guard.camera_health,
+                "storage": {**guard.storage, "low": guard.storage_low},
             }
             try:
                 response = await client.post(

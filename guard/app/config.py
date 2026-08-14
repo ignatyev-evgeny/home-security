@@ -60,7 +60,9 @@ class AlertSettings:
     followup_max: int = 20
     # 0 — родное разрешение detect-потока. Больше него запрашивать бесполезно.
     snapshot_height: int = 0
-    snapshot_quality: int = 90
+    snapshot_quality: int = 95
+    # Порог свободного места на разделе с записями, ГБ. 0 — не следить.
+    min_free_gb: float = 20.0
 
 
 @dataclass(frozen=True)
@@ -158,7 +160,8 @@ def load_config(path: Path) -> Config:
             followup_seconds=int(al.get("followup_seconds", 30)),
             followup_max=int(al.get("followup_max", 20)),
             snapshot_height=int(al.get("snapshot_height", 0)),
-            snapshot_quality=int(al.get("snapshot_quality", 90)),
+            snapshot_quality=int(al.get("snapshot_quality", 95)),
+            min_free_gb=float(al.get("min_free_gb", 20.0)),
         ),
         camera_defaults=CameraDefaults(
             username=str(cd.get("username") or "admin"),

@@ -36,6 +36,24 @@ def event_score(after: dict) -> float:
     return 0.0
 
 
+def storage_from_stats(stats: dict) -> dict:
+    """Место на разделе с записями, в гигабайтах.
+
+    Frigate отдаёт цифры по всей файловой системе, а не только по своим
+    файлам, — это и нужно: раздел общий с другими сервисами, и переполнить
+    его может кто угодно, а запись встанет у нас.
+    """
+    storage = (stats.get("service") or {}).get("storage") or {}
+    for path in ("/media/frigate/recordings", "/media/frigate/clips"):
+        entry = storage.get(path)
+        if entry:
+            return {
+                "free_gb": round(float(entry.get("free") or 0.0) / 1024, 1),
+                "total_gb": round(float(entry.get("total") or 0.0) / 1024, 1),
+            }
+    return {}
+
+
 def cameras_from_stats(stats: dict) -> dict[str, dict]:
     """Состояние камер из /api/stats.
 
@@ -65,6 +83,7 @@ class Guard:
         self._frigate = frigate
 
         self.camera_health: dict[str, dict] = {}
+        self.storage: dict = {}
         self.frigate_ok = False
 
         self._last_alert: dict[str, float] = {}
@@ -73,6 +92,7 @@ class Guard:
         self._offline_streak: dict[str, int] = {}
         self._followups: dict[str, asyncio.Task] = {}
         self._frigate_reported_down = False
+        self._low_disk_reported = False
         self._background: set[asyncio.Task] = set()
 
     def _links(self, event_id: str) -> str:
@@ -261,6 +281,8 @@ class Guard:
                 health = cameras_from_stats(stats)
                 self._apply_streaks(health)
                 self.camera_health = health
+                self.storage = storage_from_stats(stats)
+                await self._check_storage()
                 if self._config.alerts.notify_offline:
                     await self._report_transitions(health)
             await asyncio.sleep(MONITOR_INTERVAL)
@@ -282,6 +304,34 @@ class Guard:
         known = set(health)
         self._offline_reported &= known
         self._offline_streak = {k: v for k, v in self._offline_streak.items() if k in known}
+
+    async def _check_storage(self) -> None:
+        """Предупреждает, пока место ещё есть.
+
+        При заполненном разделе запись просто прекращается, и узнать об этом
+        постфактум — ровно тогда, когда запись понадобилась, — худший вариант.
+        """
+        limit = self._config.alerts.min_free_gb
+        free = self.storage.get("free_gb")
+        if not limit or free is None:
+            return
+        if free < limit and not self._low_disk_reported:
+            self._low_disk_reported = True
+            await self._notifier.text(
+                f"⚠️ Мало места под записи: свободно {free} ГБ из "
+                f"{self.storage.get('total_gb', '?')} ГБ (порог {limit:g} ГБ).\n"
+                "Когда раздел заполнится, запись остановится. Уменьши срок хранения "
+                "во Frigate или освободи место."
+            )
+        elif free >= limit and self._low_disk_reported:
+            self._low_disk_reported = False
+            await self._notifier.text(f"✅ Место под записи в норме: свободно {free} ГБ.")
+
+    @property
+    def storage_low(self) -> bool:
+        limit = self._config.alerts.min_free_gb
+        free = self.storage.get("free_gb")
+        return bool(limit and free is not None and free < limit)
 
     async def _report_transitions(self, health: dict[str, dict]) -> None:
         for name, info in health.items():

@@ -33,6 +33,7 @@ class Watch:
         self.site_down = False
         self.cameras_down: set[str] = set()
         self.frigate_down = False
+        self.storage_low = False
         self._load()
 
     def _load(self) -> None:
@@ -43,6 +44,7 @@ class Watch:
         self.last_seen = float(data.get("last_seen") or 0.0)
         self.site_down = bool(data.get("site_down"))
         self.frigate_down = bool(data.get("frigate_down"))
+        self.storage_low = bool(data.get("storage_low"))
         self.cameras_down = set(data.get("cameras_down") or ())
 
     def save(self) -> None:
@@ -54,6 +56,7 @@ class Watch:
                     "last_seen": self.last_seen,
                     "site_down": self.site_down,
                     "frigate_down": self.frigate_down,
+                    "storage_low": self.storage_low,
                     "cameras_down": sorted(self.cameras_down),
                 },
                 ensure_ascii=False,
@@ -119,6 +122,17 @@ async def handle_heartbeat(request: web.Request) -> web.Response:
         watch.frigate_down = False
         await notify(session, f"✅ <b>{site}</b>: Frigate снова работает.")
 
+    # Место под записи: дом сам решает, что считать нехваткой, — порог живёт
+    # там же, где конфиг Frigate, и здесь его дублировать незачем.
+    storage = payload.get("storage") or {}
+    if storage.get("low") and not watch.storage_low:
+        watch.storage_low = True
+        free = storage.get("free_gb", "?")
+        await notify(session, f"⚠️ <b>{site}</b>: мало места под записи — свободно {free} ГБ.")
+    elif not storage.get("low") and watch.storage_low:
+        watch.storage_low = False
+        await notify(session, f"✅ <b>{site}</b>: место под записи в норме.")
+
     # Камеры: сообщаем только о переходах, чтобы не сыпать одним и тем же.
     cameras = payload.get("cameras") or {}
     # `stable` — состояние, уже отфильтрованное домом от кратковременных провалов.
@@ -149,6 +163,7 @@ async def handle_health(request: web.Request) -> web.Response:
             "age_seconds": round(age) if age is not None else None,
             "armed": watch.last_payload.get("armed"),
             "cameras_down": sorted(watch.cameras_down),
+            "storage": watch.last_payload.get("storage"),
         }
     )
 
