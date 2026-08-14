@@ -53,13 +53,15 @@ class Guard:
         self._pending_clips: dict[str, str] = {}
         self._offline_reported: set[str] = set()
         self._offline_streak: dict[str, int] = {}
+        self._followups: dict[str, asyncio.Task] = {}
         self._frigate_reported_down = False
         self._background: set[asyncio.Task] = set()
 
-    def _spawn(self, coro) -> None:
+    def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+        return task
 
     # --- события детекции ---------------------------------------------------
 
@@ -79,6 +81,7 @@ class Guard:
         if event_type == "new":
             await self._on_new(camera, event_id, label, after)
         elif event_type == "end":
+            self._stop_followup(event_id)
             pending = self._pending_clips.pop(event_id, None)
             if pending:
                 self._spawn(self._send_clip(pending, event_id))
@@ -114,6 +117,51 @@ class Guard:
 
         if self._config.alerts.send_clip:
             self._pending_clips[event_id] = camera
+        if self._config.alerts.followup_seconds > 0:
+            self._start_followup(camera, event_id)
+
+    # --- досылка кадров, пока объект в кадре ---------------------------------
+
+    def _start_followup(self, camera: str, event_id: str) -> None:
+        if event_id in self._followups:
+            return
+        task = self._spawn(self._followup(camera, event_id))
+        self._followups[event_id] = task
+        task.add_done_callback(lambda _, eid=event_id: self._followups.pop(eid, None))
+
+    def _stop_followup(self, event_id: str) -> None:
+        task = self._followups.pop(event_id, None)
+        if task:
+            task.cancel()
+
+    async def _followup(self, camera: str, event_id: str) -> None:
+        """Шлёт свежий кадр, пока событие не закончилось.
+
+        Клип Frigate отдаёт только после ухода объекта из кадра, поэтому при
+        долгом событии он приходит с большой задержкой. Досылка закрывает эту
+        дыру: пока человек в комнате, видно, что там происходит прямо сейчас.
+        """
+        alerts = self._config.alerts
+        for shot in range(1, alerts.followup_max + 1):
+            await asyncio.sleep(alerts.followup_seconds)
+            if not self._state.armed:
+                return
+            try:
+                frame = await self._frigate.latest_jpeg(camera)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[%s] досылка прервана: %s", camera, exc)
+                return
+            await self._notifier.photo(
+                frame,
+                f"👁 <b>{html.escape(camera)}</b> · всё ещё в кадре"
+                f" · {now_time(self._config.timezone)}",
+            )
+            if shot == alerts.followup_max:
+                log.info("[%s] событие %s: предел досылок исчерпан", camera, event_id)
+                await self._notifier.text(
+                    f"ℹ️ <b>{html.escape(camera)}</b>: движение продолжается, "
+                    "но досылка кадров остановлена. Смотри живой поток во Frigate."
+                )
 
     async def _send_clip(self, camera: str, event_id: str) -> None:
         clip = await self._frigate.event_clip(event_id)

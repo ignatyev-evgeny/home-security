@@ -51,6 +51,10 @@ class AlertSettings:
     cooldown_seconds: int = 45
     send_clip: bool = True
     notify_offline: bool = True
+    # Пока объект не покинул кадр, досылать свежий кадр раз в N секунд (0 — выключить).
+    followup_seconds: int = 30
+    # Предохранитель: событие может тянуться очень долго, если человек сел и замер.
+    followup_max: int = 20
 
 
 @dataclass(frozen=True)
@@ -144,6 +148,8 @@ def load_config(path: Path) -> Config:
             cooldown_seconds=int(al.get("cooldown_seconds", 45)),
             send_clip=bool(al.get("send_clip", True)),
             notify_offline=bool(al.get("notify_offline", True)),
+            followup_seconds=int(al.get("followup_seconds", 30)),
+            followup_max=int(al.get("followup_max", 20)),
         ),
         camera_defaults=CameraDefaults(
             username=str(cd.get("username") or "admin"),
