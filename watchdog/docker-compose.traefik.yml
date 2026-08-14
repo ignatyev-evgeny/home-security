@@ -1,0 +1,27 @@
+# Оверлей для сервера с Traefik: скопировать рядом как docker-compose.override.yml.
+#
+#   cp docker-compose.traefik.yml docker-compose.override.yml
+#
+# Убирает публикацию порта на хост и отдаёт маршрутизацию Traefik, который
+# сам получает сертификат Let's Encrypt. Порт наружу при этом не открывается:
+# снаружи доступен только 443 самого Traefik.
+#
+# Подставь свой домен в WATCHDOG_DOMAIN (.env) и убедись, что он указывает
+# на этот сервер.
+
+services:
+  watchdog:
+    ports: !reset []
+    networks:
+      - web
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web
+      traefik.http.routers.watchdog.rule: Host(`${WATCHDOG_DOMAIN}`)
+      traefik.http.routers.watchdog.entrypoints: websecure
+      traefik.http.routers.watchdog.tls.certresolver: le
+      traefik.http.services.watchdog.loadbalancer.server.port: "8080"
+
+networks:
+  web:
+    external: true
