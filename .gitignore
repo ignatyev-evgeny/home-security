@@ -8,3 +8,4 @@ data/
 __pycache__/
 *.pyc
 .venv/
+frigate/data/

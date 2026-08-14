@@ -25,6 +25,11 @@ services:
       - /dev/dri/renderD128:/dev/dri/renderD128
     volumes:
       - /etc/localtime:/etc/localtime:ro
+      # Весь /config, а не только config.yml: тут лежат база событий, кэш
+      # модели и секрет для сессий. Без этого тома они живут в контейнере и
+      # пропадают при каждом пересоздании — вместе с историей событий, а
+      # Frigate заводит нового admin со свежим паролем.
+      - ./frigate/data:/config
       # На запись: /addcam и /delcam правят этот файл через API Frigate.
       - ./frigate/config.yml:/config/config.yml
       - ${FRIGATE_MEDIA:-./frigate/media}:/media/frigate
