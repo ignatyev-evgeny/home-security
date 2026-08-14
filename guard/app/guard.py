@@ -12,6 +12,10 @@ from .frigate import FrigateClient
 log = logging.getLogger(__name__)
 
 MONITOR_INTERVAL = 30.0
+# Сколько опросов подряд камера должна молчать, прежде чем это считается падением.
+# Один нулевой замер ловится штатно при перезапуске ffmpeg внутри Frigate и
+# падением не является — без этого порога каждый рестарт даёт ложную тревогу.
+OFFLINE_STREAK = 3
 
 
 def cameras_from_stats(stats: dict) -> dict[str, dict]:
@@ -48,6 +52,7 @@ class Guard:
         self._last_alert: dict[str, float] = {}
         self._pending_clips: dict[str, str] = {}
         self._offline_reported: set[str] = set()
+        self._offline_streak: dict[str, int] = {}
         self._frigate_reported_down = False
         self._background: set[asyncio.Task] = set()
 
@@ -138,24 +143,40 @@ class Guard:
             else:
                 self.frigate_ok = True
                 health = cameras_from_stats(stats)
+                self._apply_streaks(health)
                 self.camera_health = health
                 if self._config.alerts.notify_offline:
                     await self._report_transitions(health)
             await asyncio.sleep(MONITOR_INTERVAL)
 
+    def _apply_streaks(self, health: dict[str, dict]) -> None:
+        """Добавляет каждой камере `stable` — подтверждённое состояние связи.
+
+        `online` остаётся мгновенным (его показывает /cams), `stable` гасит
+        мигание: именно по нему поднимается тревога и отчитывается heartbeat.
+        """
+        for name, info in health.items():
+            if info["online"]:
+                self._offline_streak[name] = 0
+            else:
+                self._offline_streak[name] = self._offline_streak.get(name, 0) + 1
+            info["stable"] = self._offline_streak[name] < OFFLINE_STREAK
+
+        # Камеру могли удалить из конфига, пока она числилась упавшей.
+        known = set(health)
+        self._offline_reported &= known
+        self._offline_streak = {k: v for k, v in self._offline_streak.items() if k in known}
+
     async def _report_transitions(self, health: dict[str, dict]) -> None:
         for name, info in health.items():
-            if not info["online"] and name not in self._offline_reported:
+            if not info["stable"] and name not in self._offline_reported:
                 self._offline_reported.add(name)
                 await self._notifier.text(
                     f"⚠️ Камера <b>{html.escape(name)}</b> не отдаёт поток — движение с неё не отслеживается."
                 )
-            elif info["online"] and name in self._offline_reported:
+            elif info["stable"] and name in self._offline_reported:
                 self._offline_reported.discard(name)
                 await self._notifier.text(f"✅ Камера <b>{html.escape(name)}</b> снова на связи.")
-
-        # Камеру могли удалить из конфига, пока она числилась упавшей.
-        self._offline_reported &= set(health)
 
     async def shutdown(self) -> None:
         for task in list(self._background):

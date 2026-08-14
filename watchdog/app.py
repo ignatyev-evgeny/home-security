@@ -121,7 +121,13 @@ async def handle_heartbeat(request: web.Request) -> web.Response:
 
     # Камеры: сообщаем только о переходах, чтобы не сыпать одним и тем же.
     cameras = payload.get("cameras") or {}
-    now_down = {name for name, info in cameras.items() if not (info or {}).get("online")}
+    # `stable` — состояние, уже отфильтрованное домом от кратковременных провалов.
+    # Откат на `online` оставлен для домов со старой версией guard.
+    now_down = {
+        name
+        for name, info in cameras.items()
+        if not (info or {}).get("stable", (info or {}).get("online"))
+    }
     for name in sorted(now_down - watch.cameras_down):
         await notify(session, f"⚠️ <b>{site}</b>: камера <code>{name}</code> не отдаёт поток.")
     for name in sorted(watch.cameras_down - now_down):
