@@ -64,6 +64,12 @@ camera_defaults:
   # Для слабого железа замени на subtype=1 (субпоток, ~704x576).
   detect_path: "/cam/realmonitor?channel=1&subtype=0"
 
+# Встроенная подсветка камер Dahua. Адреса берутся из конфига Frigate,
+# логин — из camera_defaults.username, пароль — из CAM_PASSWORD.
+# Камеры без поддержки определяются опросом и в меню не попадают.
+lighting:
+  enabled: true
+
 heartbeat:
   enabled: true
   url: ${WATCHDOG_URL}

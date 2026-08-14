@@ -78,6 +78,11 @@ class CameraDefaults:
 
 
 @dataclass(frozen=True)
+class LightingSettings:
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class HeartbeatSettings:
     enabled: bool = False
     url: str = ""
@@ -96,6 +101,7 @@ class Config:
     mqtt: MqttSettings = field(default_factory=MqttSettings)
     alerts: AlertSettings = field(default_factory=AlertSettings)
     camera_defaults: CameraDefaults = field(default_factory=CameraDefaults)
+    lighting: LightingSettings = field(default_factory=LightingSettings)
     heartbeat: HeartbeatSettings = field(default_factory=HeartbeatSettings)
 
 
@@ -121,6 +127,7 @@ def load_config(path: Path) -> Config:
     mq = data.get("mqtt") or {}
     al = data.get("alerts") or {}
     cd = data.get("camera_defaults") or {}
+    lt = data.get("lighting") or {}
     hb = data.get("heartbeat") or {}
 
     heartbeat = HeartbeatSettings(
@@ -170,5 +177,6 @@ def load_config(path: Path) -> Config:
             record_path=str(cd.get("record_path") or "/cam/realmonitor?channel=1&subtype=0"),
             detect_path=str(cd.get("detect_path") or "/cam/realmonitor?channel=1&subtype=1"),
         ),
+        lighting=LightingSettings(enabled=bool(lt.get("enabled", True))),
         heartbeat=heartbeat,
     )

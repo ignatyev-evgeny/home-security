@@ -15,6 +15,8 @@ from .bot import Notifier, register_handlers
 from .config import ConfigError, load_config
 from .frigate import FrigateClient
 from .guard import Guard
+from .lighting import Lighting
+from .probe import camera_password
 from .state import ArmState
 
 log = logging.getLogger("app")
@@ -31,8 +33,9 @@ async def run() -> None:
     notifier = Notifier(bot, config.allowed_chat_ids)
     guard = Guard(config, state, notifier, frigate)
     admin = CameraAdmin(frigate, config.camera_defaults)
+    lighting = Lighting(frigate, config.camera_defaults.username, camera_password())
 
-    register_handlers(dp, config, state, frigate, admin, guard)
+    register_handlers(dp, config, state, frigate, admin, lighting, guard)
 
     tasks = [
         asyncio.create_task(
@@ -58,6 +61,7 @@ async def run() -> None:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await guard.shutdown()
+        await lighting.aclose()
         await frigate.aclose()
         await bot.session.close()
 

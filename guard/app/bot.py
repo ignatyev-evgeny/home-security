@@ -19,10 +19,12 @@ from aiogram.types import (
     Message,
 )
 
+from . import system
 from .admin import CameraAdmin
 from .cameras import CameraEditError
 from .config import Config
 from .frigate import FrigateClient, FrigateError
+from .lighting import Lighting
 from .state import ArmState
 
 log = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ HELP = (
     "<b>Команды</b>\n"
     "/status — режим охраны\n"
     "/cams — список камер и их состояние\n"
+    "/light — подсветка камер\n"
     "/photo — текущий кадр со всех камер\n"
     "/addcam <code>имя ip</code> — добавить камеру\n"
     "/delcam <code>имя</code> — удалить камеру\n"
@@ -57,6 +60,7 @@ def build_keyboard(armed: bool) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📸 Снимки", callback_data="photo"),
                 InlineKeyboardButton(text="📋 Камеры", callback_data="cams"),
             ],
+            [InlineKeyboardButton(text="💡 Подсветка", callback_data="light")],
         ]
     )
 
@@ -85,6 +89,9 @@ def status_text(config: Config, state: ArmState, health: dict[str, dict], storag
     if free is not None:
         mark = "⚠️" if config.alerts.min_free_gb and free < config.alerts.min_free_gb else "💾"
         lines.append(f"{mark} Свободно под записи: {free} ГБ из {storage.get('total_gb', '?')} ГБ")
+    host = system.format_line(system.snapshot())
+    if host:
+        lines.append(host)
     return "\n".join(lines)
 
 
@@ -132,6 +139,7 @@ def register_handlers(
     state: ArmState,
     frigate: FrigateClient,
     admin: CameraAdmin,
+    lighting: Lighting,
     guard,
 ) -> None:
     allowed = set(config.allowed_chat_ids)
@@ -191,6 +199,54 @@ def register_handlers(
         if failed:
             await message.answer("⚠️ Не ответили: " + ", ".join(f"<code>{html.escape(n)}</code>" for n in failed))
 
+    async def _light_view(target: Message, edit: bool) -> None:
+        """Меню подсветки: состояние каждой камеры и переключатели."""
+        try:
+            states = await lighting.states()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("подсветка недоступна: %s", exc)
+            await target.answer(f"⚠️ Не опросить камеры: {html.escape(str(exc))}")
+            return
+
+        supported = {n: s for n, s in states.items() if s is not None}
+        if not supported:
+            await target.answer(
+                "Ни одна камера не сообщила о поддержке подсветки.\n"
+                "У камер других вендоров этой настройки нет."
+            )
+            return
+
+        rows = [
+            [
+                InlineKeyboardButton(
+                    text=f"{'🟡' if on else '⚫'} {name}", callback_data=f"lt:{name}"
+                )
+            ]
+            for name, on in sorted(supported.items())
+        ]
+        rows.append(
+            [
+                InlineKeyboardButton(text="Включить все", callback_data="lt_all:on"),
+                InlineKeyboardButton(text="Выключить все", callback_data="lt_all:off"),
+            ]
+        )
+        rows.append([InlineKeyboardButton(text="← Назад", callback_data="panel")])
+
+        lit = sum(1 for on in supported.values() if on)
+        text = (
+            f"💡 <b>Подсветка</b>\n"
+            f"Горит: {lit} из {len(supported)} · {now_time(config.timezone)}"
+        )
+        markup = InlineKeyboardMarkup(inline_keyboard=rows)
+        if edit:
+            try:
+                await target.edit_text(text, reply_markup=markup)
+                return
+            except TelegramBadRequest as exc:
+                log.debug("меню подсветки не обновлено: %s", exc)
+                return
+        await target.answer(text, reply_markup=markup)
+
     # --- команды ------------------------------------------------------------
 
     @dp.message(CommandStart())
@@ -234,6 +290,11 @@ def register_handlers(
     async def _photo(message: Message) -> None:
         if message.chat.id in allowed:
             await _send_all_frames(message)
+
+    @dp.message(Command("light"))
+    async def _light_cmd(message: Message) -> None:
+        if message.chat.id in allowed:
+            await _light_view(message, edit=False)
 
     @dp.message(Command("cams"))
     async def _cams(message: Message) -> None:
@@ -336,6 +397,67 @@ def register_handlers(
             await message.answer(f"⚠️ Не получить конфиг Frigate: {html.escape(str(exc))}")
             return
         await message.answer(admin.status_text(names, guard.camera_health, guard.frigate_ok, guard.storage))
+
+    @dp.callback_query(F.data == "light")
+    async def _light_button(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None or message.chat.id not in allowed:
+            await callback.answer("Доступ запрещён", show_alert=True)
+            return
+        await callback.answer("Опрашиваю камеры…")
+        await _light_view(message, edit=True)
+
+    @dp.callback_query(F.data == "panel")
+    async def _back_to_panel(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None or message.chat.id not in allowed:
+            await callback.answer("Доступ запрещён", show_alert=True)
+            return
+        await callback.answer()
+        try:
+            await message.edit_text(
+                status_text(config, state, guard.camera_health, guard.storage),
+                reply_markup=build_keyboard(state.armed),
+            )
+        except TelegramBadRequest as exc:
+            log.debug("панель не обновлена: %s", exc)
+
+    @dp.callback_query(F.data.startswith("lt:"))
+    async def _light_toggle(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None or message.chat.id not in allowed:
+            await callback.answer("Доступ запрещён", show_alert=True)
+            return
+        name = callback.data.split(":", 1)[1]
+        current = await lighting.state(name)
+        if current is None:
+            await callback.answer("Камера не ответила", show_alert=True)
+            return
+        ok = await lighting.set(name, not current)
+        await callback.answer(
+            (f"{name}: подсветка {'включена' if not current else 'выключена'}")
+            if ok
+            else f"{name}: не удалось переключить",
+            show_alert=not ok,
+        )
+        await _light_view(message, edit=True)
+
+    @dp.callback_query(F.data.startswith("lt_all:"))
+    async def _light_all(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None or message.chat.id not in allowed:
+            await callback.answer("Доступ запрещён", show_alert=True)
+            return
+        on = callback.data.split(":", 1)[1] == "on"
+        await callback.answer("Переключаю…")
+        result = await lighting.set_all(on)
+        failed = [n for n, ok in result.items() if not ok]
+        await _light_view(message, edit=True)
+        if failed:
+            await message.answer(
+                "⚠️ Не переключились: "
+                + ", ".join(f"<code>{html.escape(n)}</code>" for n in failed)
+            )
 
     @dp.callback_query(F.data == "delcam_no")
     async def _delcam_cancel(callback: CallbackQuery) -> None:
