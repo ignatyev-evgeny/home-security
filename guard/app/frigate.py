@@ -74,26 +74,43 @@ class FrigateClient:
     async def camera_names(self) -> list[str]:
         return sorted((await self.config()).get("cameras", {}))
 
-    async def latest_jpeg(self, camera: str, height: int = 720) -> bytes:
-        """Текущий кадр камеры. Доступен всегда, не привязан к событию."""
-        return await self._bytes(f"/api/{camera}/latest.jpg?h={height}")
+    async def latest_jpeg(self, camera: str, height: int = 0, quality: int = 0) -> bytes:
+        """Текущий кадр камеры. Доступен всегда, не привязан к событию.
 
-    async def event_clip(self, event_id: str, attempts: int = 4, delay: float = 5.0) -> bytes | None:
-        """Клип события. После окончания события Frigate дописывает его не мгновенно."""
+        height=0 — отдать кадр в родном разрешении detect-потока. Запрашивать
+        больше него бессмысленно: Frigate просто растянет картинку, файл
+        распухнет, а деталей не прибавится.
+        """
+        params = []
+        if height > 0:
+            params.append(f"h={height}")
+        if quality > 0:
+            params.append(f"quality={quality}")
+        query = ("?" + "&".join(params)) if params else ""
+        return await self._bytes(f"/api/{camera}/latest.jpg{query}")
+
+    async def event_clip(self, event_id: str, attempts: int = 4, delay: float = 5.0) -> bytes:
+        """Клип события. Frigate дописывает его не мгновенно после окончания.
+
+        Бросает FrigateError с человекочитаемой причиной — она уходит в чат,
+        иначе пропажа видео выглядит как молчание без объяснений.
+        """
         for attempt in range(1, attempts + 1):
             try:
                 return await self._bytes(f"/api/events/{event_id}/clip.mp4")
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code != 404:
-                    log.warning("клип %s: %s", event_id, exc)
-                    return None
+                code = exc.response.status_code
+                if code != 404:
+                    raise FrigateError(f"Frigate ответил HTTP {code}") from exc
             except httpx.HTTPError as exc:
-                log.warning("клип %s: %s", event_id, exc)
-                return None
+                raise FrigateError(f"нет связи с Frigate: {exc}") from exc
             if attempt < attempts:
                 await asyncio.sleep(delay)
-        log.info("клип %s так и не появился", event_id)
-        return None
+        raise FrigateError(
+            f"клип не появился за {int(attempts * delay)} с. "
+            "Обычно это значит, что для камеры выключена запись (record) "
+            "или событие оказалось короче одного сегмента записи"
+        )
 
     # --- конфиг ------------------------------------------------------------
 

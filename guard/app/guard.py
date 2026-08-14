@@ -7,7 +7,7 @@ import time
 
 from .bot import Notifier, now_time
 from .config import Config
-from .frigate import FrigateClient
+from .frigate import FrigateClient, FrigateError
 
 log = logging.getLogger(__name__)
 
@@ -16,6 +16,8 @@ MONITOR_INTERVAL = 30.0
 # Один нулевой замер ловится штатно при перезапуске ffmpeg внутри Frigate и
 # падением не является — без этого порога каждый рестарт даёт ложную тревогу.
 OFFLINE_STREAK = 3
+# Потолок Telegram на файл, отправляемый ботом.
+TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024
 
 
 def cameras_from_stats(stats: dict) -> dict[str, dict]:
@@ -56,6 +58,10 @@ class Guard:
         self._followups: dict[str, asyncio.Task] = {}
         self._frigate_reported_down = False
         self._background: set[asyncio.Task] = set()
+
+    async def _frame(self, camera: str) -> bytes:
+        alerts = self._config.alerts
+        return await self._frigate.latest_jpeg(camera, alerts.snapshot_height, alerts.snapshot_quality)
 
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -108,7 +114,7 @@ class Guard:
         )
         try:
             # latest.jpg доступен сразу; снимок самого события Frigate дописывает позже.
-            frame = await self._frigate.latest_jpeg(camera)
+            frame = await self._frame(camera)
         except Exception as exc:  # noqa: BLE001
             log.warning("[%s] не получить кадр: %s", camera, exc)
             await self._notifier.text(f"{caption}\n⚠️ кадр не получен: {html.escape(str(exc))}")
@@ -147,9 +153,12 @@ class Guard:
             if not self._state.armed:
                 return
             try:
-                frame = await self._frigate.latest_jpeg(camera)
+                frame = await self._frame(camera)
             except Exception as exc:  # noqa: BLE001
                 log.warning("[%s] досылка прервана: %s", camera, exc)
+                await self._notifier.text(
+                    f"⚠️ <b>{html.escape(camera)}</b>: досылка кадров прервана — {html.escape(str(exc))}"
+                )
                 return
             await self._notifier.photo(
                 frame,
@@ -164,10 +173,32 @@ class Guard:
                 )
 
     async def _send_clip(self, camera: str, event_id: str) -> None:
-        clip = await self._frigate.event_clip(event_id)
-        if clip is None:
+        name = html.escape(camera)
+        try:
+            clip = await self._frigate.event_clip(event_id)
+        except FrigateError as exc:
+            await self._notifier.text(f"⚠️ <b>{name}</b>: клип не получен — {html.escape(str(exc))}.")
             return
-        await self._notifier.video(clip, f"🎥 {html.escape(camera)}")
+        except Exception as exc:  # noqa: BLE001
+            log.exception("клип %s", event_id)
+            await self._notifier.text(f"⚠️ <b>{name}</b>: клип не получен — {html.escape(str(exc))}.")
+            return
+
+        size_mb = len(clip) / 1024 / 1024
+        if len(clip) > TELEGRAM_FILE_LIMIT:
+            # Отправлять бессмысленно: Telegram отклонит, а причина потеряется в логах.
+            await self._notifier.text(
+                f"⚠️ <b>{name}</b>: клип {size_mb:.0f} МБ — больше лимита Telegram "
+                f"({TELEGRAM_FILE_LIMIT // 1024 // 1024} МБ для ботов). "
+                "Событие оказалось длинным; смотри запись во Frigate."
+            )
+            return
+
+        error = await self._notifier.video(clip, f"🎥 {name} · {size_mb:.1f} МБ")
+        if error:
+            await self._notifier.text(
+                f"⚠️ <b>{name}</b>: клип {size_mb:.1f} МБ не ушёл в Telegram — {html.escape(error)}"
+            )
 
     async def on_frigate_availability(self, online: bool) -> None:
         self.frigate_ok = online

@@ -97,19 +97,28 @@ class Notifier:
             except Exception as exc:  # noqa: BLE001
                 log.warning("не отправить текст в %s: %s", chat_id, exc)
 
-    async def photo(self, data: bytes, caption: str, filename: str = "snapshot.jpg") -> None:
-        for chat_id in self._chat_ids:
-            try:
-                await self._bot.send_photo(chat_id, BufferedInputFile(data, filename), caption=caption)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("не отправить фото в %s: %s", chat_id, exc)
+    async def photo(self, data: bytes, caption: str, filename: str = "snapshot.jpg") -> str | None:
+        return await self._send("фото", self._bot.send_photo, data, filename, caption)
 
-    async def video(self, data: bytes, caption: str, filename: str = "clip.mp4") -> None:
+    async def video(self, data: bytes, caption: str, filename: str = "clip.mp4") -> str | None:
+        return await self._send("клип", self._bot.send_video, data, filename, caption)
+
+    async def _send(self, what: str, method, data: bytes, filename: str, caption: str) -> str | None:
+        """Возвращает причину, если не ушло ни в один чат.
+
+        Вызывающий код сообщает о ней текстом: молчаливо пропавшее видео
+        неотличимо от «ничего не происходило», а это разные вещи.
+        """
+        errors: list[str] = []
         for chat_id in self._chat_ids:
             try:
-                await self._bot.send_video(chat_id, BufferedInputFile(data, filename), caption=caption)
+                await method(chat_id, BufferedInputFile(data, filename), caption=caption)
             except Exception as exc:  # noqa: BLE001
-                log.warning("не отправить клип в %s: %s", chat_id, exc)
+                log.warning("не отправить %s в %s: %s", what, chat_id, exc)
+                errors.append(str(exc))
+        if errors and len(errors) == len(self._chat_ids):
+            return errors[0]
+        return None
 
 
 def register_handlers(
@@ -145,7 +154,13 @@ def register_handlers(
 
         await message.bot.send_chat_action(message.chat.id, "upload_photo")
         results = await asyncio.gather(
-            *(frigate.latest_jpeg(name) for name in names), return_exceptions=True
+            *(
+                frigate.latest_jpeg(
+                    name, config.alerts.snapshot_height, config.alerts.snapshot_quality
+                )
+                for name in names
+            ),
+            return_exceptions=True,
         )
 
         media: list[InputMediaPhoto] = []

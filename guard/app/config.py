@@ -55,6 +55,9 @@ class AlertSettings:
     followup_seconds: int = 30
     # Предохранитель: событие может тянуться очень долго, если человек сел и замер.
     followup_max: int = 20
+    # 0 — родное разрешение detect-потока. Больше него запрашивать бесполезно.
+    snapshot_height: int = 0
+    snapshot_quality: int = 90
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,8 @@ def load_config(path: Path) -> Config:
             notify_offline=bool(al.get("notify_offline", True)),
             followup_seconds=int(al.get("followup_seconds", 30)),
             followup_max=int(al.get("followup_max", 20)),
+            snapshot_height=int(al.get("snapshot_height", 0)),
+            snapshot_quality=int(al.get("snapshot_quality", 90)),
         ),
         camera_defaults=CameraDefaults(
             username=str(cd.get("username") or "admin"),
