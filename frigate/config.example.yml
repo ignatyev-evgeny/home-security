@@ -44,7 +44,7 @@ snapshots:
   enabled: true
   bounding_box: true
   retain:
-    default: 14
+    default: 5
 
 record:
   enabled: true
@@ -54,10 +54,10 @@ record:
     mode: all
   alerts:
     retain:
-      days: 14
+      days: 5
   detections:
     retain:
-      days: 14
+      days: 5
 
 cameras:
   # Переименуй по комнатам: имя попадает в подпись к фото и в /cams.
