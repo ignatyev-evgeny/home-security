@@ -118,3 +118,27 @@ cameras:
           roles:
             - record
             - detect
+
+  # Камера другого вендора: XiongMai (XM530), приложения iCSee/XMEye.
+  # Ссылка нестандартная — логин и пароль лежат в пути, разделитель `_`, а не `&`.
+  # Такую камеру /addcam собрать не умеет, она добавляется руками.
+  # Как узнать ссылку для чужой камеры — см. README, «Камеры не-Dahua».
+  cam_117:
+    ffmpeg:
+      inputs:
+        - path: 'rtsp://192.168.1.117:554/user=admin_password={FRIGATE_RTSP_PASSWORD}_channel=0_stream=0.sdp?real_stream'
+          input_args: preset-rtsp-generic
+          roles:
+            - record
+            - detect
+    objects:
+      # Перед этой камерой часто ходит собака. Трекаем её отдельной меткой,
+      # чтобы она попадала во Frigate как dog и была видна в UI, но алертов
+      # по ней не было: в guard/config.yaml в alerts.labels только person.
+      track:
+        - person
+        - dog
+      filters:
+        person:
+          min_score: 0.7
+          threshold: 0.8
