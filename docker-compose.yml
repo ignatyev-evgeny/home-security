@@ -48,6 +48,11 @@ services:
     environment:
       FRIGATE_RTSP_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
       TZ: ${TZ:-Europe/Moscow}
+      # Kaby Lake: драйвер iHD выбирается автоматически, но на этом поколении
+      # срывается под нагрузкой — «Failed to sync surface», после чего Frigate
+      # перезапускает ffmpeg. Legacy-драйвер i965 представляется как раз
+      # драйвером Kaby Lake и работает стабильно.
+      LIBVA_DRIVER_NAME: i965
 
   guard:
     build: ./guard
