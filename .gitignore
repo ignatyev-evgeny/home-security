@@ -1,0 +1,10 @@
+.env
+guard/config.yaml
+frigate/config.yml
+frigate/media/
+watchdog/.env
+watchdog/data/
+data/
+__pycache__/
+*.pyc
+.venv/

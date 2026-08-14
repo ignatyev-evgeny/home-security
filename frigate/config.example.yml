@@ -1,0 +1,136 @@
+# Скопируй в frigate/config.yml.
+# Файл монтируется на запись: /addcam и /delcam правят его через API Frigate.
+
+mqtt:
+  enabled: true
+  host: mosquitto
+  port: 1883
+  topic_prefix: frigate
+
+# OpenVINO на встроенной графике i7-7700T (HD Graphics 630).
+# Отдельный ускоритель вроде Coral для шести камер не нужен.
+detectors:
+  ov:
+    type: openvino
+    device: GPU
+
+model:
+  width: 300
+  height: 300
+  input_tensor: nhwc
+  input_pixel_format: bgr
+  path: /openvino-model/ssdlite_mobilenet_v2.xml
+  labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+
+ffmpeg:
+  # Kaby Lake — VAAPI. Для 10-го поколения и новее в Frigate есть preset-intel-qsv-h264.
+  hwaccel_args: preset-vaapi
+
+detect:
+  enabled: true
+  fps: 5
+
+objects:
+  track:
+    - person
+  filters:
+    person:
+      # Порог детекции задаётся здесь, а не в боте: так его видно в UI Frigate
+      # вместе с картинкой, на которой он сработал.
+      min_score: 0.6
+      threshold: 0.75
+
+snapshots:
+  enabled: true
+  bounding_box: true
+  retain:
+    default: 14
+
+record:
+  enabled: true
+  retain:
+    # Непрерывную запись не держим — только куски вокруг событий.
+    days: 0
+    mode: all
+  alerts:
+    retain:
+      days: 14
+  detections:
+    retain:
+      days: 14
+
+cameras:
+  # Переименуй по комнатам: имя попадает в подпись к фото и в /cams.
+  # Допустимы латиница в нижнем регистре, цифры и _.
+  # Пароль подставляется Frigate из переменной окружения FRIGATE_RTSP_PASSWORD.
+  cam_110:
+    ffmpeg:
+      inputs:
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.110:554/cam/realmonitor?channel=1&subtype=0'
+          input_args: preset-rtsp-generic
+          roles:
+            - record
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.110:554/cam/realmonitor?channel=1&subtype=1'
+          input_args: preset-rtsp-generic
+          roles:
+            - detect
+
+  cam_111:
+    ffmpeg:
+      inputs:
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.111:554/cam/realmonitor?channel=1&subtype=0'
+          input_args: preset-rtsp-generic
+          roles:
+            - record
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.111:554/cam/realmonitor?channel=1&subtype=1'
+          input_args: preset-rtsp-generic
+          roles:
+            - detect
+
+  cam_112:
+    ffmpeg:
+      inputs:
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.112:554/cam/realmonitor?channel=1&subtype=0'
+          input_args: preset-rtsp-generic
+          roles:
+            - record
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.112:554/cam/realmonitor?channel=1&subtype=1'
+          input_args: preset-rtsp-generic
+          roles:
+            - detect
+
+  cam_113:
+    ffmpeg:
+      inputs:
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.113:554/cam/realmonitor?channel=1&subtype=0'
+          input_args: preset-rtsp-generic
+          roles:
+            - record
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.113:554/cam/realmonitor?channel=1&subtype=1'
+          input_args: preset-rtsp-generic
+          roles:
+            - detect
+
+  cam_115:
+    ffmpeg:
+      inputs:
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.115:554/cam/realmonitor?channel=1&subtype=0'
+          input_args: preset-rtsp-generic
+          roles:
+            - record
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.115:554/cam/realmonitor?channel=1&subtype=1'
+          input_args: preset-rtsp-generic
+          roles:
+            - detect
+
+  cam_120:
+    ffmpeg:
+      inputs:
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.120:554/cam/realmonitor?channel=1&subtype=0'
+          input_args: preset-rtsp-generic
+          roles:
+            - record
+        - path: 'rtsp://admin:{FRIGATE_RTSP_PASSWORD}@192.168.1.120:554/cam/realmonitor?channel=1&subtype=1'
+          input_args: preset-rtsp-generic
+          roles:
+            - detect

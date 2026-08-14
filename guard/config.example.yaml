@@ -1,0 +1,49 @@
+# Скопируй в guard/config.yaml.
+# ${ПЕРЕМЕННЫЕ} подставляются из окружения (.env) — секреты сюда не пишем.
+
+telegram:
+  bot_token: ${BOT_TOKEN}
+  # Кто может ставить и снимать с охраны. Узнать свой id: отправь боту /start.
+  allowed_chat_ids:
+    - 000000000
+
+timezone: Europe/Moscow
+state_path: data/state.json
+
+frigate:
+  # Внутренний порт без аутентификации, доступный только внутри сети compose.
+  url: http://frigate:5000
+  user: admin
+  # Пусто — логин не выполняется. Заполнять только если ходишь на порт 8971.
+  password: ${FRIGATE_PASSWORD}
+
+mqtt:
+  host: mosquitto
+  port: 1883
+  topic_prefix: frigate
+
+alerts:
+  # Какие объекты считать тревогой. Должны быть в objects.track у Frigate.
+  labels: [person]
+  # Порог оставлен Frigate (objects.filters.person.min_score); 0 = не фильтровать повторно.
+  min_score: 0.0
+  # Пауза между алертами по одной камере: без неё проход по коридору
+  # мимо трёх камер даст очередь из фото.
+  cooldown_seconds: 45
+  send_clip: true
+  notify_offline: true
+
+# Шаблон RTSP-ссылок для /addcam.
+camera_defaults:
+  username: admin
+  password_placeholder: "{FRIGATE_RTSP_PASSWORD}"
+  rtsp_port: 554
+  record_path: "/cam/realmonitor?channel=1&subtype=0"
+  detect_path: "/cam/realmonitor?channel=1&subtype=1"
+
+heartbeat:
+  enabled: true
+  url: ${WATCHDOG_URL}
+  token: ${WATCHDOG_TOKEN}
+  interval_seconds: 60
+  site: Дом

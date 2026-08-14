@@ -1,0 +1,19 @@
+# Разворачивается на ВНЕШНЕМ сервере, не дома.
+services:
+  watchdog:
+    build: .
+    container_name: home-watchdog
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      CHAT_IDS: ${CHAT_IDS}
+      AUTH_TOKEN: ${AUTH_TOKEN}
+      # Сколько молчания считать пропажей связи. При отчётах раз в минуту
+      # 180с переживают одну-две потерянные отправки без ложной тревоги.
+      STALE_SECONDS: ${STALE_SECONDS:-180}
+      CHECK_INTERVAL: ${CHECK_INTERVAL:-30}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${WATCHDOG_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data

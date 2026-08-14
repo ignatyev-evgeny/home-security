@@ -1,0 +1,65 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    # Портов наружу нет: брокером пользуются только frigate и guard.
+
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    container_name: frigate
+    restart: unless-stopped
+    stop_grace_period: 30s
+    shm_size: "512mb"
+    depends_on:
+      - mosquitto
+    devices:
+      # Встроенная графика: VAAPI-декодирование и OpenVINO-детекция.
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      # На запись: /addcam и /delcam правят этот файл через API Frigate.
+      - ./frigate/config.yml:/config/config.yml
+      - ${FRIGATE_MEDIA:-./frigate/media}:/media/frigate
+      - type: tmpfs
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    ports:
+      - "8971:8971"   # веб-интерфейс с аутентификацией
+      - "8554:8554"   # RTSP-рестрим go2rtc
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+      # Порт 5000 намеренно не публикуем: это внутренний API без аутентификации,
+      # им пользуется только guard по внутренней сети compose.
+    environment:
+      FRIGATE_RTSP_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+      TZ: ${TZ:-Europe/Moscow}
+
+  guard:
+    build: ./guard
+    container_name: home-guard
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+      - frigate
+    environment:
+      CONFIG_PATH: /app/config.yaml
+      BOT_TOKEN: ${BOT_TOKEN}
+      # Реальный пароль камер нужен только для проверки при /addcam;
+      # в конфиг Frigate уезжает плейсхолдер.
+      CAM_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+      FRIGATE_PASSWORD: ${FRIGATE_PASSWORD:-}
+      WATCHDOG_URL: ${WATCHDOG_URL:-}
+      WATCHDOG_TOKEN: ${WATCHDOG_TOKEN:-}
+      TZ: ${TZ:-Europe/Moscow}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./guard/config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+
+volumes:
+  mosquitto-data:
