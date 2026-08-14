@@ -59,6 +59,22 @@ class Guard:
         self._frigate_reported_down = False
         self._background: set[asyncio.Task] = set()
 
+    def _links(self, event_id: str) -> str:
+        """Ссылки на клип и на само событие во Frigate.
+
+        Пригодны только внутри домашней сети, то есть с VPN. Отдаём их, когда
+        видео в Telegram не уехало: посмотреть запись всё равно надо.
+        """
+        base = self._config.frigate.public_url
+        if not base:
+            return (
+                "\nЧтобы получать прямые ссылки на такие клипы, укажи "
+                "<code>frigate.public_url</code> в guard/config.yaml."
+            )
+        clip = html.escape(f"{base}/api/events/{event_id}/clip.mp4", quote=True)
+        explore = html.escape(f"{base}/explore", quote=True)
+        return f'\n🔗 <a href="{clip}">Открыть клип</a> · <a href="{explore}">Frigate</a> (нужен VPN)'
+
     async def _frame(self, camera: str) -> bytes:
         alerts = self._config.alerts
         return await self._frigate.latest_jpeg(camera, alerts.snapshot_height, alerts.snapshot_quality)
@@ -177,27 +193,32 @@ class Guard:
         try:
             clip = await self._frigate.event_clip(event_id)
         except FrigateError as exc:
-            await self._notifier.text(f"⚠️ <b>{name}</b>: клип не получен — {html.escape(str(exc))}.")
+            await self._notifier.text(
+                f"⚠️ <b>{name}</b>: клип не получен — {html.escape(str(exc))}.{self._links(event_id)}"
+            )
             return
         except Exception as exc:  # noqa: BLE001
             log.exception("клип %s", event_id)
-            await self._notifier.text(f"⚠️ <b>{name}</b>: клип не получен — {html.escape(str(exc))}.")
+            await self._notifier.text(
+                f"⚠️ <b>{name}</b>: клип не получен — {html.escape(str(exc))}.{self._links(event_id)}"
+            )
             return
 
         size_mb = len(clip) / 1024 / 1024
         if len(clip) > TELEGRAM_FILE_LIMIT:
             # Отправлять бессмысленно: Telegram отклонит, а причина потеряется в логах.
             await self._notifier.text(
-                f"⚠️ <b>{name}</b>: клип {size_mb:.0f} МБ — больше лимита Telegram "
-                f"({TELEGRAM_FILE_LIMIT // 1024 // 1024} МБ для ботов). "
-                "Событие оказалось длинным; смотри запись во Frigate."
+                f"🎥 <b>{name}</b>: клип {size_mb:.0f} МБ — больше лимита Telegram "
+                f"({TELEGRAM_FILE_LIMIT // 1024 // 1024} МБ для ботов), "
+                f"событие вышло длинным.{self._links(event_id)}"
             )
             return
 
         error = await self._notifier.video(clip, f"🎥 {name} · {size_mb:.1f} МБ")
         if error:
             await self._notifier.text(
-                f"⚠️ <b>{name}</b>: клип {size_mb:.1f} МБ не ушёл в Telegram — {html.escape(error)}"
+                f"⚠️ <b>{name}</b>: клип {size_mb:.1f} МБ не ушёл в Telegram — "
+                f"{html.escape(error)}{self._links(event_id)}"
             )
 
     async def on_frigate_availability(self, online: bool) -> None:

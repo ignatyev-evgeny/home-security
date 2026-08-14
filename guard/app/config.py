@@ -33,6 +33,9 @@ class FrigateSettings:
     url: str = "http://frigate:5000"
     user: str = "admin"
     password: str = ""
+    # Адрес Frigate, доступный с телефона (через VPN). Нужен только для ссылок
+    # на клипы, которые не влезли в лимит Telegram. Пусто — ссылок не будет.
+    public_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,7 @@ def load_config(path: Path) -> Config:
             url=str(fr.get("url") or "http://frigate:5000").rstrip("/"),
             user=str(fr.get("user") or "admin"),
             password=str(fr.get("password") or ""),
+            public_url=str(fr.get("public_url") or "").rstrip("/"),
         ),
         mqtt=MqttSettings(
             host=str(mq.get("host") or "mosquitto"),
