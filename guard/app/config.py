@@ -61,6 +61,9 @@ class AlertSettings:
     # 0 — родное разрешение detect-потока. Больше него запрашивать бесполезно.
     snapshot_height: int = 0
     snapshot_quality: int = 95
+    # Первое фото тревоги — снимок самого события с рамкой объекта, а не
+    # просто текущий кадр. Видно, что именно детектор принял за человека.
+    event_snapshot: bool = True
     # Порог свободного места на разделе с записями, ГБ. 0 — не следить.
     min_free_gb: float = 20.0
 
@@ -168,6 +171,7 @@ def load_config(path: Path) -> Config:
             followup_max=int(al.get("followup_max", 20)),
             snapshot_height=int(al.get("snapshot_height", 0)),
             snapshot_quality=int(al.get("snapshot_quality", 95)),
+            event_snapshot=bool(al.get("event_snapshot", True)),
             min_free_gb=float(al.get("min_free_gb", 20.0)),
         ),
         camera_defaults=CameraDefaults(

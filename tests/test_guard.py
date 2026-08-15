@@ -87,6 +87,7 @@ class FakeNotifier:
 class FakeFrigate:
     def __init__(self): self.stats_payload = {"cameras": {}}
     async def latest_jpeg(self, cam, height=0, quality=0): return b"\xff\xd8jpeg"
+    async def event_snapshot(self, eid, attempts=3, delay=1.0): return None
     async def event_clip(self, eid, attempts=4, delay=5.0): return b"mp4"
     async def stats(self): return self.stats_payload
 

@@ -90,6 +90,25 @@ class FrigateClient:
         query = ("?" + "&".join(params)) if params else ""
         return await self._bytes(f"/api/{camera}/latest.jpg{query}")
 
+    async def event_snapshot(self, event_id: str, attempts: int = 3, delay: float = 1.0) -> bytes | None:
+        """Снимок события с рамкой вокруг объекта.
+
+        Появляется на доли секунды позже самого события, поэтому пара коротких
+        повторов. Не появился — вернём None, а вызывающий код возьмёт живой
+        кадр: тревога не должна ждать картинку.
+        """
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self._bytes(f"/api/events/{event_id}/snapshot.jpg?bbox=1")
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    return None
+            except httpx.HTTPError:
+                return None
+            if attempt < attempts:
+                await asyncio.sleep(delay)
+        return None
+
     async def event_clip(self, event_id: str, attempts: int = 4, delay: float = 5.0) -> bytes:
         """Клип события. Frigate дописывает его не мгновенно после окончания.
 

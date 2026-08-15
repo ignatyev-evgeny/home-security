@@ -32,6 +32,7 @@ class F:
     async def latest_jpeg(self, cam, height=0, quality=0):
         if self.fail: raise RuntimeError("камера отвалилась")
         return b"jpeg"
+    async def event_snapshot(self, eid, attempts=3, delay=1.0): return None
     async def event_clip(self, eid, attempts=4, delay=5.0): return b"mp4"
 
 def ev(t, eid="e1", cam="cam_110"):

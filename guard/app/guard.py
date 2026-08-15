@@ -166,13 +166,20 @@ class Guard:
             f"{html.escape(label)}"
             + (f" · {score:.0%}" if score else "")
         )
-        try:
-            # latest.jpg доступен сразу; снимок самого события Frigate дописывает позже.
-            frame = await self._frame(camera)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("[%s] не получить кадр: %s", camera, exc)
-            await self._notifier.text(f"{caption}\n⚠️ кадр не получен: {html.escape(str(exc))}")
-        else:
+        frame = None
+        if self._config.alerts.event_snapshot:
+            # Снимок события с рамкой: видно, что именно детектор счёл человеком.
+            frame = await self._frigate.event_snapshot(event_id)
+        if frame is None:
+            try:
+                # Живой кадр всегда под рукой — на него откатываемся, если снимок
+                # события ещё не записан или отключён.
+                frame = await self._frame(camera)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[%s] не получить кадр: %s", camera, exc)
+                await self._notifier.text(f"{caption}\n⚠️ кадр не получен: {html.escape(str(exc))}")
+                frame = None
+        if frame is not None:
             await self._notifier.photo(frame, caption)
 
         if self._config.alerts.send_clip:
