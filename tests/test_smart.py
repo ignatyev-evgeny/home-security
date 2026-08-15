@@ -40,7 +40,15 @@ assert set(s["disks"]) == {"sda", "nvme0n1"}, s
 assert system.disk_problems(s) == [], system.disk_problems(s)
 line = system.format_disks(s)
 assert line.startswith("💿") and "39 °C" in line and "6 лет" in line, line
+assert "0 лет" not in line, "молодой диск не должен показываться как нулевой"
 print("здоровые диски:", line)
+
+# возраст словами: месяцы до года, дальше годы в нужном падеже
+for hours, want in ((0, None), (720, "1 мес"), (5639, "7 мес"), (8760, "1 год"),
+                    (17520, "2 года"), (43800, "5 лет"), (183960, "21 год")):
+    got = system.format_age(hours)
+    assert got == want, f"{hours} ч -> {got}, ожидалось {want}"
+print("возраст диска склоняется правильно")
 
 # --- появились переназначенные секторы ----------------------------------------
 bad = json.loads(json.dumps(HEALTHY))

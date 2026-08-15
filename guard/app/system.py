@@ -177,6 +177,27 @@ def snapshot() -> dict:
     return data
 
 
+def format_age(hours: float) -> str | None:
+    """Возраст диска словами.
+
+    Целочисленные годы врут на молодых дисках: 5639 часов — это не «0 лет»,
+    а больше полугода. До года считаем месяцами.
+    """
+    if not hours or hours < 720:          # меньше месяца — цифра ни о чём не говорит
+        return None
+    if hours < 8760:
+        return f"{int(hours // 720)} мес"
+    years = int(hours // 8760)
+    last, tens = years % 10, years % 100
+    if last == 1 and tens != 11:
+        word = "год"
+    elif last in (2, 3, 4) and tens not in (12, 13, 14):
+        word = "года"
+    else:
+        word = "лет"
+    return f"{years} {word}"
+
+
 def format_disks(smart_data: dict) -> str | None:
     """Строка о дисках для /status: модель, температура и признаки износа."""
     if not smart_data:
@@ -193,8 +214,9 @@ def format_disks(smart_data: dict) -> str | None:
         bits = [name]
         if d.get("temp") is not None:
             bits.append(f"{d['temp']} °C")
-        if d.get("hours"):
-            bits.append(f"{int(d['hours']) // 8760} лет")
+        age = format_age(d.get("hours") or 0)
+        if age:
+            bits.append(age)
         parts.append(" ".join(bits))
     return ("💿 Диски: " + " · ".join(parts)) if parts else None
 
