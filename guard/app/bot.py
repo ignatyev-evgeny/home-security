@@ -89,9 +89,13 @@ def status_text(config: Config, state: ArmState, health: dict[str, dict], storag
     if free is not None:
         mark = "⚠️" if config.alerts.min_free_gb and free < config.alerts.min_free_gb else "💾"
         lines.append(f"{mark} Свободно под записи: {free} ГБ из {storage.get('total_gb', '?')} ГБ")
-    host = system.format_line(system.snapshot())
+    snap = system.snapshot()
+    host = system.format_line(snap)
     if host:
         lines.append(host)
+    disks = system.format_disks(snap.get("smart") or {})
+    if disks:
+        lines.append(disks)
     return "\n".join(lines)
 
 

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 THERMAL = Path("/sys/class/thermal")
 HWMON = Path("/sys/class/hwmon")
+# Сводку SMART готовит tools/smart-export.py на хосте: контейнеру не нужен
+# доступ к дисковым устройствам, он лишь читает готовый файл.
+SMART_FILE = Path(os.environ.get("SMART_FILE", "data/smart.json"))
+# Данные старше этого срока считаем протухшими — экспорт, видимо, не работает.
+SMART_MAX_AGE = 3600.0
 
 # Датчиков в системе много, и большинство из них — корпус и чипсет. Интересны
 # два: температура пакета процессора и накопителя, на котором лежат записи.
@@ -117,6 +124,41 @@ def temperatures() -> dict[str, float]:
     return result
 
 
+def smart() -> dict:
+    """Здоровье дисков из файла, подготовленного на хосте.
+
+    Отсутствие файла — не ошибка: экспорт может быть просто не настроен,
+    и тогда бот работает как раньше, без дисковой части.
+    """
+    try:
+        data = json.loads(SMART_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    updated = float(data.get("updated") or 0)
+    if not updated or time.time() - updated > SMART_MAX_AGE:
+        return {"stale": True, "updated": updated}
+    return {"disks": data.get("disks") or {}, "updated": updated}
+
+
+def disk_problems(smart_data: dict) -> list[str]:
+    """Диски, у которых есть повод для беспокойства."""
+    problems = []
+    for name, d in (smart_data.get("disks") or {}).items():
+        if d.get("error"):
+            continue
+        if d.get("passed") is False:
+            problems.append(f"{name}: SMART сообщает о неисправности")
+            continue
+        for key, label in (("reallocated", "переназначенных секторов"),
+                           ("pending", "секторов ждут переназначения"),
+                           ("uncorrectable", "неисправимых секторов"),
+                           ("media_errors", "ошибок носителя")):
+            value = d.get(key)
+            if isinstance(value, (int, float)) and value > 0:
+                problems.append(f"{name}: {int(value)} {label}")
+    return problems
+
+
 def snapshot() -> dict:
     """Сводка о хосте. Любой недоступный источник просто отсутствует в ответе."""
     data: dict = {"cpus": os.cpu_count() or 0}
@@ -129,7 +171,32 @@ def snapshot() -> dict:
     temps = temperatures()
     if temps:
         data["temps"] = temps
+    disks = smart()
+    if disks:
+        data["smart"] = disks
     return data
+
+
+def format_disks(smart_data: dict) -> str | None:
+    """Строка о дисках для /status: модель, температура и признаки износа."""
+    if not smart_data:
+        return None
+    if smart_data.get("stale"):
+        return "⚠️ Данные SMART устарели — проверь экспорт на хосте"
+    problems = disk_problems(smart_data)
+    if problems:
+        return "⚠️ Диски: " + "; ".join(problems)
+    parts = []
+    for name, d in sorted((smart_data.get("disks") or {}).items()):
+        if d.get("error"):
+            continue
+        bits = [name]
+        if d.get("temp") is not None:
+            bits.append(f"{d['temp']} °C")
+        if d.get("hours"):
+            bits.append(f"{int(d['hours']) // 8760} лет")
+        parts.append(" ".join(bits))
+    return ("💿 Диски: " + " · ".join(parts)) if parts else None
 
 
 def format_line(data: dict | None) -> str | None:

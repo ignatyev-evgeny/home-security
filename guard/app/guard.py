@@ -5,6 +5,7 @@ import html
 import logging
 import time
 
+from . import system
 from .bot import Notifier, now_time
 from .config import Config
 from .frigate import FrigateClient, FrigateError
@@ -93,6 +94,7 @@ class Guard:
         self._followups: dict[str, asyncio.Task] = {}
         self._frigate_reported_down = False
         self._low_disk_reported = False
+        self._disk_problems_reported: set[str] = set()
         self._background: set[asyncio.Task] = set()
 
     def _links(self, event_id: str) -> str:
@@ -283,6 +285,7 @@ class Guard:
                 self.camera_health = health
                 self.storage = storage_from_stats(stats)
                 await self._check_storage()
+                await self._check_disks()
                 if self._config.alerts.notify_offline:
                     await self._report_transitions(health)
             await asyncio.sleep(MONITOR_INTERVAL)
@@ -326,6 +329,19 @@ class Guard:
         elif free >= limit and self._low_disk_reported:
             self._low_disk_reported = False
             await self._notifier.text(f"✅ Место под записи в норме: свободно {free} ГБ.")
+
+    async def _check_disks(self) -> None:
+        """Сообщает о деградации дисков по данным SMART.
+
+        Диск такого возраста, как правило, не умирает мгновенно — он начинает
+        сыпаться постепенно, и первый же плохой сектор стоит увидеть сразу.
+        """
+        problems = set(system.disk_problems(system.smart()))
+        for text in sorted(problems - self._disk_problems_reported):
+            await self._notifier.text(f"⚠️ <b>Диск</b>: {html.escape(text)}")
+        if self._disk_problems_reported and not problems:
+            await self._notifier.text("✅ Претензий к дискам по SMART больше нет.")
+        self._disk_problems_reported = problems
 
     @property
     def storage_low(self) -> bool:
