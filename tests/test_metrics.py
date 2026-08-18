@@ -50,6 +50,9 @@ async def main():
     assert len(rows) == 1, rows
     r = rows[0]
     assert (r["cpu_temp"], r["disk_temp"], r["load1"], r["mem_pct"]) == (67.0, 45.0, 4.9, 26)
+    # нагрузка округляется: сырое os.getloadavg() даёт 5.52197265625
+    await m.sample({**snap, "load": (5.52197265625, 1.0, 1.0)}, FakeGuard())
+    assert (await m.history(1))[-1]["load1"] == 5.52, (await m.history(1))[-1]["load1"]
     assert r["free_gb"] == 375.0 and r["inference"] == 9.9
     assert r["cameras_ok"] == 2 and r["armed"] == 1
     print("замер записан:", {k: r[k] for k in ("cpu_temp", "load1", "cameras_ok", "armed")})

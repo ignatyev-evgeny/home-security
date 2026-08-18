@@ -82,7 +82,9 @@ class Metrics:
             "ts": int(time.time()),
             "cpu_temp": temps.get("CPU"),
             "disk_temp": temps.get("диск"),
-            "load1": load[0] if load else None,
+            # os.getloadavg() отдаёт полную точность двоичной дроби;
+            # на графике и карточке нужны два знака, а не 5.52197265625.
+            "load1": round(float(load[0]), 2) if load else None,
             "mem_pct": mem.get("used_pct"),
             "free_gb": (guard.storage or {}).get("free_gb"),
             "inference": guard.inference_ms,
