@@ -8,14 +8,23 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# Замер раз в минуту: за 30 дней это ~43 тысячи строк, единицы мегабайт.
-# Чаще нет смысла — температуры и нагрузка так быстро не меняются.
+# В базу пишем раз в минуту: за 30 дней это ~43 тысячи строк, единицы мегабайт.
 SAMPLE_INTERVAL = 60.0
+# А снимаем температуру часто. Пакет 35-ваттного процессора под рывковой
+# нагрузкой гуляет на 10-12 °C за секунды, и одиночный замер раз в минуту —
+# это случайное мгновение, по которому нельзя судить ни о нагреве, ни о
+# результате замены термопасты. Поэтому за минуту копим и пишем min/avg/max.
+PROBE_INTERVAL = 5.0
+
+FIELDS = ("ts", "cpu_temp", "cpu_min", "cpu_max", "disk_temp", "load1",
+          "mem_pct", "free_gb", "inference", "cameras_ok", "armed")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
     ts          INTEGER PRIMARY KEY,
-    cpu_temp    REAL,
+    cpu_temp    REAL,   -- среднее за минуту
+    cpu_min     REAL,
+    cpu_max     REAL,
     disk_temp   REAL,
     load1       REAL,
     mem_pct     REAL,
@@ -41,6 +50,12 @@ class Metrics:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.executescript(_SCHEMA)
+            # База могла быть создана прежней версией без колонок разброса.
+            have = {r[1] for r in db.execute("PRAGMA table_info(samples)")}
+            for column in ("cpu_min", "cpu_max"):
+                if column not in have:
+                    db.execute(f"ALTER TABLE samples ADD COLUMN {column} REAL")
+                    log.info("в историю добавлена колонка %s", column)
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self._path, timeout=10)
@@ -49,13 +64,17 @@ class Metrics:
         return db
 
     def _write(self, row: dict) -> None:
+        # Недостающие поля — NULL, а не отказ записи: лучше сохранить то, что
+        # есть, чем потерять весь замер из-за одного недоступного датчика.
+        row = {k: row.get(k) for k in FIELDS}
         cutoff = int(time.time() - self._retention * 86400)
         with self._connect() as db:
             db.execute(
                 "INSERT OR REPLACE INTO samples "
-                "(ts, cpu_temp, disk_temp, load1, mem_pct, free_gb, inference, cameras_ok, armed) "
-                "VALUES (:ts, :cpu_temp, :disk_temp, :load1, :mem_pct, :free_gb, :inference, "
-                ":cameras_ok, :armed)",
+                "(ts, cpu_temp, cpu_min, cpu_max, disk_temp, load1, mem_pct, free_gb, "
+                " inference, cameras_ok, armed) "
+                "VALUES (:ts, :cpu_temp, :cpu_min, :cpu_max, :disk_temp, :load1, :mem_pct, "
+                ":free_gb, :inference, :cameras_ok, :armed)",
                 row,
             )
             db.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
@@ -72,15 +91,24 @@ class Metrics:
         step = len(rows) / limit
         return [dict(rows[int(i * step)]) for i in range(limit)]
 
-    async def sample(self, snapshot: dict, guard) -> None:
-        """Складывает один замер. Недоступные источники пишутся как NULL."""
+    async def sample(self, snapshot: dict, guard, cpu_samples: list[float] | None = None) -> None:
+        """Складывает один замер за минуту.
+
+        `cpu_samples` — накопленные за минуту показания пакета процессора.
+        Пусто — берём мгновенное значение из снимка, но это заметно хуже.
+        """
         temps = snapshot.get("temps") or {}
         load = snapshot.get("load") or ()
         mem = snapshot.get("memory") or {}
         health = guard.camera_health or {}
+        cpu = list(cpu_samples or [])
+        if not cpu and temps.get("CPU") is not None:
+            cpu = [float(temps["CPU"])]
         row = {
             "ts": int(time.time()),
-            "cpu_temp": temps.get("CPU"),
+            "cpu_temp": round(sum(cpu) / len(cpu), 1) if cpu else None,
+            "cpu_min": round(min(cpu), 1) if cpu else None,
+            "cpu_max": round(max(cpu), 1) if cpu else None,
             "disk_temp": temps.get("диск"),
             # os.getloadavg() отдаёт полную точность двоичной дроби;
             # на графике и карточке нужны два знака, а не 5.52197265625.
@@ -106,7 +134,16 @@ class Metrics:
             return []
 
     async def run(self, snapshot_fn, guard) -> None:
-        """Пишет замеры, пока сервис жив."""
+        """Часто опрашивает температуру, раз в минуту пишет сводку за неё."""
+        cpu: list[float] = []
+        elapsed = 0.0
         while True:
-            await self.sample(snapshot_fn(), guard)
-            await asyncio.sleep(SAMPLE_INTERVAL)
+            snapshot = snapshot_fn()
+            value = (snapshot.get("temps") or {}).get("CPU")
+            if value is not None:
+                cpu.append(float(value))
+            if elapsed >= SAMPLE_INTERVAL:
+                await self.sample(snapshot, guard, cpu)
+                cpu, elapsed = [], 0.0
+            await asyncio.sleep(PROBE_INTERVAL)
+            elapsed += PROBE_INTERVAL

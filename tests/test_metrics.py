@@ -57,6 +57,27 @@ async def main():
     assert r["cameras_ok"] == 2 and r["armed"] == 1
     print("замер записан:", {k: r[k] for k in ("cpu_temp", "load1", "cameras_ok", "armed")})
 
+    # --- разброс температуры за минуту -------------------------------------
+    # Пакет процессора гуляет на 10+ °C за секунды, поэтому в минуту пишется
+    # не мгновенное значение, а сводка по частым замерам.
+    await m.sample(snap, FakeGuard(), cpu_samples=[57.0, 69.0, 61.0, 58.0, 64.0])
+    r = (await m.history(1))[-1]
+    assert (r["cpu_min"], r["cpu_max"]) == (57.0, 69.0), r
+    assert r["cpu_temp"] == 61.8, r["cpu_temp"]
+    print(f"сводка за минуту: среднее {r['cpu_temp']}, разброс {r['cpu_min']}–{r['cpu_max']} °C")
+
+    # без накопленных замеров берётся мгновенное значение из снимка
+    await m.sample(snap, FakeGuard(), cpu_samples=[])
+    r = (await m.history(1))[-1]
+    assert r["cpu_temp"] == r["cpu_min"] == r["cpu_max"] == 67.0, r
+    print("без накопления пишется мгновенное значение")
+
+    # датчик недоступен — не выдумываем нули
+    await m.sample({"load": (1.0, 1.0, 1.0)}, FakeGuard(), cpu_samples=[])
+    r = (await m.history(1))[-1]
+    assert r["cpu_temp"] is None and r["cpu_min"] is None, r
+    print("недоступный датчик пишется как NULL")
+
     # недоступные источники не ломают запись
     await asyncio.sleep(0)
     m._write({"ts": int(time.time()) + 1, "cpu_temp": None, "disk_temp": None, "load1": None,
@@ -94,7 +115,8 @@ async def main():
         async with s.get(f"{base_url}/") as r:
             html = await r.text()
             assert r.status == 200 and r.content_type == "text/html"
-        for needle in ("Телеметрия сервера", "cpu_temp", "api/metrics", "30 дней"):
+        for needle in ("Телеметрия сервера", "cpu_temp", "cpu_min", "cpu_max",
+                       "api/metrics", "30 дней", "разброс"):
             assert needle in html, needle
         assert "http://" not in html.split("<script>")[1], "страница тянет что-то извне"
         print("страница отдаётся, внешних зависимостей нет")

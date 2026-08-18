@@ -58,8 +58,10 @@ PAGE = """<!doctype html>
 <script>
 const RANGES = [[1,"сутки"],[7,"неделя"],[30,"30 дней"]];
 const CHARTS = [
-  {title:"Температуры, °C", unit:"°C", series:[
-    {key:"cpu_temp", name:"процессор", color:"var(--accent)"},
+  {title:"Температуры, °C", unit:"°C",
+   band:{lo:"cpu_min", hi:"cpu_max", color:"var(--accent)"},
+   series:[
+    {key:"cpu_temp", name:"процессор (среднее)", color:"var(--accent)"},
     {key:"disk_temp", name:"диск", color:"var(--cool)"}]},
   {title:"Нагрузка и память", unit:"", series:[
     {key:"load1", name:"load average", color:"var(--warn)"},
@@ -75,6 +77,24 @@ let days = 1;
 const fmt = ts => new Date(ts*1000).toLocaleString("ru-RU",
   days > 2 ? {day:"2-digit",month:"2-digit"} : {hour:"2-digit",minute:"2-digit"});
 
+// Полоса между минимумом и максимумом за минуту. Рисуется отдельными
+// кусками: разрыв данных не должен соединяться прямой через всю страницу.
+function band(rows, loKey, hiKey, x, y) {
+  let out = "", seg = [];
+  const flush = () => {
+    if (seg.length < 2) { seg = []; return; }
+    let d = "M" + seg.map(r => x(r.ts).toFixed(1)+" "+y(r[hiKey]).toFixed(1)).join("L");
+    d += "L" + seg.slice().reverse().map(r => x(r.ts).toFixed(1)+" "+y(r[loKey]).toFixed(1)).join("L") + "Z";
+    out += d; seg = [];
+  };
+  for (const r of rows) {
+    if (r[loKey] === null || r[loKey] === undefined || r[hiKey] === null || r[hiKey] === undefined) flush();
+    else seg.push(r);
+  }
+  flush();
+  return out;
+}
+
 function path(rows, key, x, y) {
   let d = "", pen = false;
   for (const r of rows) {
@@ -88,7 +108,9 @@ function path(rows, key, x, y) {
 
 function chart(rows, spec) {
   const W = 900, H = 220, P = {t:10, r:12, b:22, l:38};
-  const vals = rows.flatMap(r => spec.series.map(s => r[s.key]).filter(v => v !== null && v !== undefined));
+  const keysForScale = spec.series.map(s => s.key)
+    .concat(spec.band ? [spec.band.lo, spec.band.hi] : []);
+  const vals = rows.flatMap(r => keysForScale.map(k => r[k]).filter(v => v !== null && v !== undefined));
   if (!vals.length) return `<figure><figcaption><b>${spec.title}</b></figcaption>
     <div class="empty">нет данных за период</div></figure>`;
   let lo = Math.min(...vals), hi = Math.max(...vals);
@@ -108,27 +130,41 @@ function chart(rows, spec) {
     const t = t0 + (t1 - t0) * i / 4, xx = x(t);
     g += `<text class="axis" x="${xx.toFixed(1)}" y="${H-6}" text-anchor="middle">${fmt(t)}</text>`;
   }
+  const area = spec.band
+    ? `<path d="${band(rows, spec.band.lo, spec.band.hi, x, y)}" fill="${spec.band.color}"
+         fill-opacity=".18" stroke="none"/>`
+    : "";
   const lines = spec.series.map(s =>
     `<path d="${path(rows, s.key, x, y)}" fill="none" stroke="${s.color}" stroke-width="1.6"
        stroke-linejoin="round" stroke-linecap="round"/>`).join("");
   const keys = spec.series.map(s =>
     `<span class="key"><i style="background:${s.color}"></i>${s.name}</span>`).join("");
+  let spread = "";
+  if (spec.band) {
+    const los = rows.map(r => r[spec.band.lo]).filter(v => v !== null && v !== undefined);
+    const his = rows.map(r => r[spec.band.hi]).filter(v => v !== null && v !== undefined);
+    if (los.length && his.length)
+      spread = ` · разброс ${Math.min(...los).toFixed(0)}–${Math.max(...his).toFixed(0)} °C`;
+  }
   const last = spec.series.map(s => {
     for (let i = rows.length-1; i >= 0; i--) {
       const v = rows[i][s.key];
       if (v !== null && v !== undefined) return `${s.name}: <b>${v}</b>`;
     }
     return "";
-  }).filter(Boolean).join(" · ");
+  }).filter(Boolean).join(" · ") + spread;
   return `<figure><figcaption><b>${spec.title}</b>${keys}<span>${last}</span></figcaption>
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${spec.title}">${g}${lines}</svg></figure>`;
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${spec.title}">${g}${area}${lines}</svg></figure>`;
 }
 
 function cards(rows) {
   if (!rows.length) return "";
   const r = rows[rows.length-1];
   const items = [
-    ["процессор", r.cpu_temp, "°C"], ["диск", r.disk_temp, "°C"],
+    ["процессор", r.cpu_temp !== null && r.cpu_min !== null && r.cpu_max !== null
+        ? `${r.cpu_temp} <span style="font-size:.6em;color:var(--muted)">${r.cpu_min}–${r.cpu_max}</span>`
+        : r.cpu_temp, "°C"],
+    ["диск", r.disk_temp, "°C"],
     ["нагрузка", r.load1, ""], ["память", r.mem_pct, "%"],
     ["детектор", r.inference, "мс"], ["свободно", r.free_gb, "ГБ"],
   ];
