@@ -16,7 +16,7 @@ SAMPLE_INTERVAL = 60.0
 # результате замены термопасты. Поэтому за минуту копим и пишем min/avg/max.
 PROBE_INTERVAL = 5.0
 
-FIELDS = ("ts", "cpu_temp", "cpu_min", "cpu_max", "disk_temp", "load1",
+FIELDS = ("ts", "cpu_temp", "cpu_min", "cpu_max", "disk_temp", "fan_rpm", "load1",
           "mem_pct", "free_gb", "inference", "cameras_ok", "armed")
 
 _SCHEMA = """
@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS samples (
     cpu_min     REAL,
     cpu_max     REAL,
     disk_temp   REAL,
+    fan_rpm     INTEGER,
     load1       REAL,
     mem_pct     REAL,
     free_gb     REAL,
@@ -52,7 +53,7 @@ class Metrics:
             db.executescript(_SCHEMA)
             # База могла быть создана прежней версией без колонок разброса.
             have = {r[1] for r in db.execute("PRAGMA table_info(samples)")}
-            for column in ("cpu_min", "cpu_max"):
+            for column in ("cpu_min", "cpu_max", "fan_rpm"):
                 if column not in have:
                     db.execute(f"ALTER TABLE samples ADD COLUMN {column} REAL")
                     log.info("в историю добавлена колонка %s", column)
@@ -71,10 +72,10 @@ class Metrics:
         with self._connect() as db:
             db.execute(
                 "INSERT OR REPLACE INTO samples "
-                "(ts, cpu_temp, cpu_min, cpu_max, disk_temp, load1, mem_pct, free_gb, "
-                " inference, cameras_ok, armed) "
-                "VALUES (:ts, :cpu_temp, :cpu_min, :cpu_max, :disk_temp, :load1, :mem_pct, "
-                ":free_gb, :inference, :cameras_ok, :armed)",
+                "(ts, cpu_temp, cpu_min, cpu_max, disk_temp, fan_rpm, load1, mem_pct, "
+                " free_gb, inference, cameras_ok, armed) "
+                "VALUES (:ts, :cpu_temp, :cpu_min, :cpu_max, :disk_temp, :fan_rpm, :load1, "
+                ":mem_pct, :free_gb, :inference, :cameras_ok, :armed)",
                 row,
             )
             db.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
@@ -110,6 +111,9 @@ class Metrics:
             "cpu_min": round(min(cpu), 1) if cpu else None,
             "cpu_max": round(max(cpu), 1) if cpu else None,
             "disk_temp": temps.get("диск"),
+            # Берём самый быстрый вентилятор: на Dell их может быть несколько,
+            # а интересует тот, что реагирует на нагрев процессора.
+            "fan_rpm": max((snapshot.get("fans") or {}).values(), default=None),
             # os.getloadavg() отдаёт полную точность двоичной дроби;
             # на графике и карточке нужны два знака, а не 5.52197265625.
             "load1": round(float(load[0]), 2) if load else None,

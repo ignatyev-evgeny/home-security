@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Телеметрия сервера</title>
+<style>
+  :root {
+    --bg:#f4f2f3; --surface:#fbfafb; --text:#191418; --muted:#6c636a;
+    --line:#dcd4d9; --accent:#b72248; --ok:#2c7355; --warn:#96660f; --cool:#2f6f8f;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg:#141116; --surface:#1b181d; --text:#ece6ea; --muted:#9c929b;
+    --line:#2f2933; --accent:#f05b7c; --ok:#62bf97; --warn:#d9a548; --cool:#6fb6d9;
+  } }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif }
+  .wrap { max-width:1100px; margin:0 auto; padding:1.5rem 1rem 4rem }
+  h1 { font-size:1.4rem; margin:0 0 .3rem }
+  .sub { color:var(--muted); font-size:.9rem; margin:0 0 1.5rem }
+  .now { display:grid; grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr)); gap:.75rem; margin-bottom:1.5rem }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:.8rem .9rem }
+  .card .k { font-size:.7rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted) }
+  .card .v { font-size:1.45rem; font-variant-numeric:tabular-nums; margin-top:.2rem; white-space:nowrap }
+  .card .v small { font-size:.55em; color:var(--muted); font-variant-numeric:tabular-nums }
+  .bar { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem }
+  button { font:inherit; padding:.35rem .8rem; border-radius:100px; cursor:pointer;
+           background:var(--surface); color:var(--text); border:1px solid var(--line) }
+  button[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:#fff }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
+  .hint { color:var(--muted); font-size:.82rem; margin-left:auto }
+  figure { margin:0 0 1.25rem; background:var(--surface); border:1px solid var(--line);
+           border-radius:10px; padding:.9rem .8rem .5rem; position:relative }
+  figcaption { display:flex; gap:.9rem; flex-wrap:wrap; align-items:baseline;
+               font-size:.82rem; color:var(--muted); margin-bottom:.5rem; padding:0 .2rem }
+  figcaption .t { font-weight:600; color:var(--text) }
+  .key { display:inline-flex; align-items:center; gap:.35em; cursor:pointer; user-select:none;
+         border:0; background:none; padding:0; font:inherit; color:var(--muted) }
+  .key i { width:.8em; height:.8em; border-radius:2px; display:inline-block }
+  .key[aria-pressed="false"] { opacity:.4; text-decoration:line-through }
+  svg { display:block; width:100%; height:auto; touch-action:pan-y }
+  .grid { stroke:var(--line) }
+  .axis { fill:var(--muted); font-size:10px }
+  .cursor { stroke:var(--muted); stroke-dasharray:3 3; pointer-events:none }
+  .dot { pointer-events:none }
+  .sel { fill:var(--accent); fill-opacity:.12; pointer-events:none }
+  .tip { position:absolute; pointer-events:none; z-index:5; background:var(--surface);
+         border:1px solid var(--line); border-radius:8px; padding:.5rem .65rem;
+         font-size:.8rem; line-height:1.45; box-shadow:0 6px 20px -8px rgba(0,0,0,.45);
+         white-space:nowrap; opacity:0; transition:opacity .12s }
+  .tip.on { opacity:1 }
+  .tip b { font-variant-numeric:tabular-nums }
+  .empty { color:var(--muted); padding:2rem; text-align:center }
+</style></head>
+<body><div class="wrap">
+  <h1>Телеметрия сервера</h1>
+  <p class="sub" id="sub">загрузка…</p>
+  <div class="now" id="now"></div>
+  <div class="bar" id="bar"></div>
+  <div id="charts"></div>
+</div>
+<script>
+"use strict";
+const RANGES = [[1,"сутки"],[7,"неделя"],[30,"30 дней"]];
+const CHARTS = [
+  {id:"temp", title:"Температуры", unit:"°C",
+   band:{lo:"cpu_min", hi:"cpu_max", color:"var(--accent)"},
+   series:[{key:"cpu_temp", name:"процессор", color:"var(--accent)", unit:"°C"},
+           {key:"disk_temp", name:"диск", color:"var(--cool)", unit:"°C"}]},
+  {id:"fan", title:"Вентилятор", unit:"об/мин", optional:true,
+   series:[{key:"fan_rpm", name:"обороты", color:"var(--warn)", unit:"об/мин"}]},
+  {id:"load", title:"Нагрузка и память", unit:"",
+   series:[{key:"load1", name:"load average", color:"var(--warn)", unit:""},
+           {key:"mem_pct", name:"память", color:"var(--ok)", unit:"%"}]},
+  {id:"det", title:"Детектор и камеры", unit:"",
+   series:[{key:"inference", name:"инференс", color:"var(--accent)", unit:"мс"},
+           {key:"cameras_ok", name:"камер на связи", color:"var(--ok)", unit:""}]},
+  {id:"disk", title:"Свободно под записи", unit:"ГБ",
+   series:[{key:"free_gb", name:"свободно", color:"var(--cool)", unit:"ГБ"}]},
+];
+const W = 900, H = 210, P = {t:10, r:14, b:22, l:42};
+
+let days = 1, rows = [], zoom = null, hidden = new Set();
+
+const has = v => v !== null && v !== undefined;
+const stamp = ts => new Date(ts*1000).toLocaleString("ru-RU",
+  {day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"});
+const tick = ts => new Date(ts*1000).toLocaleString("ru-RU",
+  (zoom ? (zoom[1]-zoom[0]) : days*86400) > 2*86400
+    ? {day:"2-digit", month:"2-digit"} : {hour:"2-digit", minute:"2-digit"});
+
+function visible() {
+  if (!zoom) return rows;
+  return rows.filter(r => r.ts >= zoom[0] && r.ts <= zoom[1]);
+}
+function keys(spec) {
+  return spec.series.filter(s => !hidden.has(s.key)).map(s => s.key)
+    .concat(spec.band && !hidden.has("cpu_temp") ? [spec.band.lo, spec.band.hi] : []);
+}
+function scale(data, spec) {
+  const vals = data.flatMap(r => keys(spec).map(k => r[k]).filter(has));
+  if (!vals.length) return null;
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1e-6) hi = lo + 1;
+  const pad = (hi - lo) * 0.12;
+  const t0 = data[0].ts, t1 = data[data.length-1].ts;
+  return {
+    lo: lo - pad, hi: hi + pad, t0, t1: t1 > t0 ? t1 : t0 + 1,
+    x(t) { return P.l + (t - this.t0) / (this.t1 - this.t0) * (W - P.l - P.r); },
+    y(v) { return P.t + (1 - (v - this.lo) / (this.hi - this.lo)) * (H - P.t - P.b); },
+    at(px) { return this.t0 + (px - P.l) / (W - P.l - P.r) * (this.t1 - this.t0); },
+  };
+}
+function line(data, key, sc) {
+  let d = "", pen = false;
+  for (const r of data) {
+    if (!has(r[key])) { pen = false; continue; }   // разрыв, а не ноль
+    d += (pen ? "L" : "M") + sc.x(r.ts).toFixed(1) + " " + sc.y(r[key]).toFixed(1);
+    pen = true;
+  }
+  return d;
+}
+function area(data, lo, hi, sc) {
+  let out = "", seg = [];
+  const flush = () => {
+    if (seg.length > 1) {
+      out += "M" + seg.map(r => sc.x(r.ts).toFixed(1)+" "+sc.y(r[hi]).toFixed(1)).join("L")
+           + "L" + seg.slice().reverse().map(r => sc.x(r.ts).toFixed(1)+" "+sc.y(r[lo]).toFixed(1)).join("L") + "Z";
+    }
+    seg = [];
+  };
+  for (const r of data) (has(r[lo]) && has(r[hi])) ? seg.push(r) : flush();
+  flush();
+  return out;
+}
+
+function figure(spec) {
+  const data = visible();
+  const sc = scale(data, spec);
+  const legend = spec.series.map(s =>
+    `<button class="key" data-key="${s.key}" aria-pressed="${!hidden.has(s.key)}"
+       title="показать или скрыть"><i style="background:${s.color}"></i>${s.name}</button>`).join("");
+  if (!sc) return `<figure data-chart="${spec.id}"><figcaption><span class="t">${spec.title}</span>${legend}</figcaption>
+    <div class="empty">нет данных за период</div></figure>`;
+
+  let g = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = sc.lo + (sc.hi - sc.lo) * i / 4, yy = sc.y(v);
+    g += `<line class="grid" x1="${P.l}" y1="${yy.toFixed(1)}" x2="${W-P.r}" y2="${yy.toFixed(1)}"/>`
+       + `<text class="axis" x="${P.l-6}" y="${(yy+3).toFixed(1)}" text-anchor="end">${v.toFixed(Math.abs(v)<10?1:0)}</text>`;
+    const t = sc.t0 + (sc.t1 - sc.t0) * i / 4;
+    g += `<text class="axis" x="${sc.x(t).toFixed(1)}" y="${H-6}" text-anchor="middle">${tick(t)}</text>`;
+  }
+  const band = spec.band && !hidden.has("cpu_temp")
+    ? `<path d="${area(data, spec.band.lo, spec.band.hi, sc)}" fill="${spec.band.color}" fill-opacity=".16"/>` : "";
+  const paths = spec.series.filter(s => !hidden.has(s.key)).map(s =>
+    `<path d="${line(data, s.key, sc)}" fill="none" stroke="${s.color}" stroke-width="1.6"
+       stroke-linejoin="round" stroke-linecap="round"/>`).join("");
+  let spread = "";
+  if (spec.band && !hidden.has("cpu_temp")) {
+    const los = data.map(r => r[spec.band.lo]).filter(has), his = data.map(r => r[spec.band.hi]).filter(has);
+    if (los.length) spread = `<span>разброс ${Math.min(...los).toFixed(0)}–${Math.max(...his).toFixed(0)} °C</span>`;
+  }
+  return `<figure data-chart="${spec.id}">
+    <figcaption><span class="t">${spec.title}${spec.unit ? ", "+spec.unit : ""}</span>${legend}${spread}</figcaption>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${spec.title}">
+      ${g}${band}${paths}
+      <rect class="sel" x="0" y="0" width="0" height="0" hidden></rect>
+      <line class="cursor" y1="${P.t}" y2="${H-P.b}" x1="0" x2="0" hidden></line>
+      <g class="dot"></g>
+    </svg><div class="tip"></div></figure>`;
+}
+
+function nearest(data, ts) {
+  let best = data[0], gap = Infinity;
+  for (const r of data) { const d = Math.abs(r.ts - ts); if (d < gap) { gap = d; best = r; } }
+  return best;
+}
+
+function wire(fig, spec) {
+  const svg = fig.querySelector("svg"); if (!svg) return;
+  const tip = fig.querySelector(".tip"), cur = svg.querySelector(".cursor");
+  const dots = svg.querySelector(".dot"), sel = svg.querySelector(".sel");
+  let dragFrom = null;
+
+  const toChart = e => {
+    const b = svg.getBoundingClientRect();
+    return (e.clientX - b.left) / b.width * W;
+  };
+  const show = e => {
+    const data = visible(), sc = scale(data, spec);
+    if (!sc || !data.length) return;
+    const px = Math.min(W - P.r, Math.max(P.l, toChart(e)));
+    const r = nearest(data, sc.at(px));
+    cur.setAttribute("x1", sc.x(r.ts)); cur.setAttribute("x2", sc.x(r.ts)); cur.removeAttribute("hidden");
+    dots.innerHTML = spec.series.filter(s => !hidden.has(s.key) && has(r[s.key]))
+      .map(s => `<circle cx="${sc.x(r.ts).toFixed(1)}" cy="${sc.y(r[s.key]).toFixed(1)}" r="3.5"
+                   fill="${s.color}" stroke="var(--surface)" stroke-width="1.5"/>`).join("");
+    const lines = spec.series.filter(s => !hidden.has(s.key))
+      .map(s => has(r[s.key]) ? `${s.name}: <b>${r[s.key]}${s.unit ? " "+s.unit : ""}</b>` : `${s.name}: —`);
+    if (spec.band && has(r.cpu_min) && !hidden.has("cpu_temp"))
+      lines.push(`разброс: <b>${r.cpu_min}–${r.cpu_max} °C</b>`);
+    if (has(r.armed)) lines.push(r.armed ? "🔴 под охраной" : "🟢 снято");
+    tip.innerHTML = `<div style="color:var(--muted)">${stamp(r.ts)}</div>` + lines.join("<br>");
+    tip.classList.add("on");
+    const b = svg.getBoundingClientRect(), fb = fig.getBoundingClientRect();
+    const left = b.left - fb.left + sc.x(r.ts) / W * b.width;
+    tip.style.left = Math.min(fb.width - tip.offsetWidth - 8, Math.max(8, left + 12)) + "px";
+    tip.style.top = "48px";
+    if (dragFrom !== null) {
+      const a = Math.min(dragFrom, px), w = Math.abs(px - dragFrom);
+      sel.setAttribute("x", a); sel.setAttribute("width", w);
+      sel.setAttribute("y", P.t); sel.setAttribute("height", H - P.t - P.b);
+      sel.removeAttribute("hidden");
+    }
+  };
+  const hide = () => {
+    tip.classList.remove("on"); cur.setAttribute("hidden", "");
+    dots.innerHTML = ""; sel.setAttribute("hidden", ""); dragFrom = null;
+  };
+
+  svg.addEventListener("pointermove", show);
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("pointerdown", e => { dragFrom = toChart(e); svg.setPointerCapture(e.pointerId); });
+  svg.addEventListener("pointerup", e => {
+    const data = visible(), sc = scale(data, spec);
+    const to = toChart(e);
+    // Короткий тап — это просто просмотр значения, а не выбор диапазона.
+    if (sc && dragFrom !== null && Math.abs(to - dragFrom) > 12) {
+      const a = sc.at(Math.min(dragFrom, to)), b = sc.at(Math.max(dragFrom, to));
+      zoom = [a, b];
+      render();
+    }
+    dragFrom = null; sel.setAttribute("hidden", "");
+  });
+}
+
+function cards() {
+  const data = visible();
+  if (!data.length) return "";
+  const r = data[data.length-1];
+  const cpu = has(r.cpu_temp)
+    ? `${r.cpu_temp}<small> ${has(r.cpu_min) ? r.cpu_min+"–"+r.cpu_max : ""}</small> °C` : null;
+  const items = [
+    ["процессор", cpu],
+    ["диск", has(r.disk_temp) ? r.disk_temp + " °C" : null],
+    ["вентилятор", has(r.fan_rpm) ? r.fan_rpm + " об/мин" : null],
+    ["нагрузка", has(r.load1) ? r.load1 : null],
+    ["память", has(r.mem_pct) ? r.mem_pct + " %" : null],
+    ["детектор", has(r.inference) ? r.inference + " мс" : null],
+    ["свободно", has(r.free_gb) ? r.free_gb + " ГБ" : null],
+  ];
+  return items.filter(([, v]) => v !== null)
+    .map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+
+function render() {
+  const data = visible();
+  document.getElementById("bar").innerHTML =
+    RANGES.map(([d, n]) => `<button data-days="${d}" aria-pressed="${d===days && !zoom}">${n}</button>`).join("")
+    + (zoom ? `<button data-reset="1">сбросить масштаб</button>` : "")
+    + `<span class="hint">наведи для значений · выдели участок мышью для приближения</span>`;
+  document.getElementById("now").innerHTML = cards();
+  const specs = CHARTS.filter(c => !c.optional || data.some(r => has(r[c.series[0].key])));
+  document.getElementById("charts").innerHTML = specs.map(figure).join("");
+  specs.forEach(spec => {
+    const fig = document.querySelector(`figure[data-chart="${spec.id}"]`);
+    if (fig) wire(fig, spec);
+  });
+  const sub = document.getElementById("sub");
+  sub.textContent = data.length
+    ? `${data.length} замеров · ${stamp(data[0].ts)} — ${stamp(data[data.length-1].ts)}`
+    : "замеров пока нет — история копится с первого запуска";
+}
+
+async function load() {
+  try {
+    rows = await (await fetch(`api/metrics?days=${days}`)).json();
+  } catch (e) {
+    document.getElementById("sub").textContent = "не удалось получить данные";
+    return;
+  }
+  render();
+}
+
+document.getElementById("bar").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.reset) { zoom = null; render(); return; }
+  if (b.dataset.days) { days = +b.dataset.days; zoom = null; load(); }
+});
+document.getElementById("charts").addEventListener("click", e => {
+  const k = e.target.closest(".key"); if (!k) return;
+  hidden.has(k.dataset.key) ? hidden.delete(k.dataset.key) : hidden.add(k.dataset.key);
+  render();
+});
+load();
+// Освежаем данные, но не мешаем разглядывать приближенный участок.
+setInterval(() => { if (!zoom) load(); }, 60000);
+</script></body></html>

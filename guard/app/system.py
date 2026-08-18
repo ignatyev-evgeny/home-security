@@ -111,6 +111,34 @@ def _hwmon_sensors() -> list[tuple[str, float]]:
     return found
 
 
+def fans() -> dict[str, int]:
+    """Обороты вентиляторов, если ядро их показывает.
+
+    На настольных Dell датчики появляются только после загрузки модуля
+    dell-smm-hwmon (обычно с force=1). Пока его нет, словарь пуст — и это
+    не ошибка, просто нечего читать.
+    """
+    found: dict[str, int] = {}
+    try:
+        mons = sorted(HWMON.glob("hwmon*"))
+    except OSError:
+        return found
+    for mon in mons:
+        for path in sorted(mon.glob("fan*_input")):
+            raw = _read(path)
+            if not raw:
+                continue
+            try:
+                rpm = int(raw)
+            except ValueError:
+                continue
+            if rpm <= 0:                       # остановленный вентилятор не показываем
+                continue
+            label = _read(path.with_name(path.name.replace("_input", "_label")))
+            found[label or path.name.replace("_input", "")] = rpm
+    return found
+
+
 def temperatures() -> dict[str, float]:
     """Температуры процессора и накопителя, если датчики доступны."""
     sensors = _thermal_zones() + _hwmon_sensors()
@@ -171,6 +199,9 @@ def snapshot() -> dict:
     temps = temperatures()
     if temps:
         data["temps"] = temps
+    rpm = fans()
+    if rpm:
+        data["fans"] = rpm
     disks = smart()
     if disks:
         data["smart"] = disks
@@ -237,4 +268,7 @@ def format_line(data: dict | None) -> str | None:
     temps = data.get("temps")
     if temps:
         parts.append(" · ".join(f"{k} {v:.0f} °C" for k, v in temps.items()))
+    rpm = data.get("fans")
+    if rpm:
+        parts.append(" · ".join(f"{k} {v} об/мин" for k, v in rpm.items()))
     return " · ".join(parts) if parts else None

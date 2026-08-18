@@ -72,6 +72,14 @@ async def main():
     assert r["cpu_temp"] == r["cpu_min"] == r["cpu_max"] == 67.0, r
     print("без накопления пишется мгновенное значение")
 
+    # обороты вентилятора: берём самый быстрый из доступных
+    await m.sample({**snap, "fans": {"fan1": 1200, "fan2": 2400}}, FakeGuard(), [60.0])
+    assert (await m.history(1))[-1]["fan_rpm"] == 2400
+    # датчиков нет — колонка пустая, а не ноль
+    await m.sample(snap, FakeGuard(), [60.0])
+    assert (await m.history(1))[-1]["fan_rpm"] is None
+    print("обороты вентилятора: пишутся при наличии датчика, иначе NULL")
+
     # датчик недоступен — не выдумываем нули
     await m.sample({"load": (1.0, 1.0, 1.0)}, FakeGuard(), cpu_samples=[])
     r = (await m.history(1))[-1]
@@ -115,10 +123,12 @@ async def main():
         async with s.get(f"{base_url}/") as r:
             html = await r.text()
             assert r.status == 200 and r.content_type == "text/html"
-        for needle in ("Телеметрия сервера", "cpu_temp", "cpu_min", "cpu_max",
-                       "api/metrics", "30 дней", "разброс"):
+        for needle in ("Телеметрия сервера", "cpu_temp", "cpu_min", "cpu_max", "fan_rpm",
+                       "api/metrics", "30 дней", "разброс",
+                       "pointermove", "выдели участок"):
             assert needle in html, needle
         assert "http://" not in html.split("<script>")[1], "страница тянет что-то извне"
+        assert "<script src" not in html and "cdn" not in html.lower(), "внешний скрипт"
         print("страница отдаётся, внешних зависимостей нет")
 
         async with s.get(f"{base_url}/api/metrics?days=1") as r:

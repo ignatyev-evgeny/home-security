@@ -42,6 +42,20 @@ calm = system.format_line({"cpus": 8, "load": (3.0, 3.0, 3.0)})
 assert calm.startswith("🖥"), calm
 print("частичные данные и порог перегрузки:", hot, "|", calm)
 
+# вентиляторы: остановленные и нечитаемые игнорируются
+fake = tmp / "hwmon"; (fake / "hwmon0").mkdir(parents=True)
+(fake / "hwmon0" / "name").write_text("dell_smm\n")
+(fake / "hwmon0" / "fan1_input").write_text("2400\n")
+(fake / "hwmon0" / "fan1_label").write_text("Processor Fan\n")
+(fake / "hwmon0" / "fan2_input").write_text("0\n")
+(fake / "hwmon0" / "fan3_input").write_text("мусор\n")
+system.HWMON = fake
+assert system.fans() == {"Processor Fan": 2400}, system.fans()
+system.HWMON = Path("/nonexistent")
+assert system.fans() == {}
+system.HWMON = Path("/sys/class/hwmon")
+print("вентиляторы: остановленные и битые значения пропускаются")
+
 st = ArmState(tmp / "s.json")
 txt = status_text(cfg, st, {}, {"free_gb": 100.0, "total_gb": 169.0})
 assert "Нагрузка" in txt, txt
