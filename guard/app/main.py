@@ -9,13 +9,14 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from . import events, heartbeat
+from . import events, heartbeat, system, web
 from .admin import CameraAdmin
 from .bot import Notifier, register_handlers
 from .config import ConfigError, load_config
 from .frigate import FrigateClient
 from .guard import Guard
 from .lighting import Lighting
+from .metrics import Metrics
 from .probe import camera_password
 from .state import ArmState
 
@@ -37,13 +38,18 @@ async def run() -> None:
 
     register_handlers(dp, config, state, frigate, admin, lighting, guard)
 
+    metrics = Metrics(config.state_path.parent / "metrics.db", config.web.retention_days)
+
     tasks = [
         asyncio.create_task(
             events.subscribe(config.mqtt, guard.on_event, guard.on_frigate_availability),
             name="mqtt",
         ),
         asyncio.create_task(guard.monitor(), name="monitor"),
+        asyncio.create_task(metrics.run(system.snapshot, guard), name="metrics"),
     ]
+    if config.web.enabled:
+        tasks.append(asyncio.create_task(web.run(metrics, config.web.port), name="web"))
     if config.heartbeat.enabled:
         tasks.append(
             asyncio.create_task(heartbeat.run(config.heartbeat, state, guard), name="heartbeat")

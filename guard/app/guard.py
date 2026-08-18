@@ -55,6 +55,15 @@ def storage_from_stats(stats: dict) -> dict:
     return {}
 
 
+def inference_from_stats(stats: dict) -> float | None:
+    """Скорость детектора в миллисекундах на кадр."""
+    for data in (stats.get("detectors") or {}).values():
+        speed = (data or {}).get("inference_speed")
+        if speed:
+            return round(float(speed), 2)
+    return None
+
+
 def cameras_from_stats(stats: dict) -> dict[str, dict]:
     """Состояние камер из /api/stats.
 
@@ -85,6 +94,7 @@ class Guard:
 
         self.camera_health: dict[str, dict] = {}
         self.storage: dict = {}
+        self.inference_ms: float | None = None
         self.frigate_ok = False
 
         self._last_alert: dict[str, float] = {}
@@ -291,6 +301,7 @@ class Guard:
                 self._apply_streaks(health)
                 self.camera_health = health
                 self.storage = storage_from_stats(stats)
+                self.inference_ms = inference_from_stats(stats)
                 await self._check_storage()
                 await self._check_disks()
                 if self._config.alerts.notify_offline:
@@ -349,6 +360,10 @@ class Guard:
         if self._disk_problems_reported and not problems:
             await self._notifier.text("✅ Претензий к дискам по SMART больше нет.")
         self._disk_problems_reported = problems
+
+    @property
+    def armed(self) -> bool:
+        return bool(self._state.armed)
 
     @property
     def storage_low(self) -> bool:

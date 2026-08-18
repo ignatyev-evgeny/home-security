@@ -75,6 +75,14 @@ camera_defaults:
 lighting:
   enabled: true
 
+# Страница с историей температур, нагрузки и состояния камер.
+# Слушает только домашнюю сеть: http://<адрес сервера>:8090
+web:
+  enabled: true
+  port: 8090
+  # Сколько дней хранить замеры. Замер раз в минуту, 30 дней — единицы мегабайт.
+  retention_days: 30
+
 heartbeat:
   enabled: true
   url: ${WATCHDOG_URL}

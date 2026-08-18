@@ -72,6 +72,9 @@ services:
       WATCHDOG_TOKEN: ${WATCHDOG_TOKEN:-}
       TZ: ${TZ:-Europe/Moscow}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      # Страница телеметрии. Как и Frigate, доступна только из домашней сети.
+      - "8090:8090"
     volumes:
       - ./guard/config.yaml:/app/config.yaml:ro
       - ./data:/app/data

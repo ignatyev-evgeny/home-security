@@ -81,6 +81,15 @@ class CameraDefaults:
 
 
 @dataclass(frozen=True)
+class WebSettings:
+    """Страница телеметрии. Порт слушается только в домашней сети."""
+
+    enabled: bool = True
+    port: int = 8090
+    retention_days: int = 30
+
+
+@dataclass(frozen=True)
 class LightingSettings:
     enabled: bool = True
 
@@ -105,6 +114,7 @@ class Config:
     alerts: AlertSettings = field(default_factory=AlertSettings)
     camera_defaults: CameraDefaults = field(default_factory=CameraDefaults)
     lighting: LightingSettings = field(default_factory=LightingSettings)
+    web: WebSettings = field(default_factory=WebSettings)
     heartbeat: HeartbeatSettings = field(default_factory=HeartbeatSettings)
 
 
@@ -131,6 +141,7 @@ def load_config(path: Path) -> Config:
     al = data.get("alerts") or {}
     cd = data.get("camera_defaults") or {}
     lt = data.get("lighting") or {}
+    wb = data.get("web") or {}
     hb = data.get("heartbeat") or {}
 
     heartbeat = HeartbeatSettings(
@@ -182,5 +193,10 @@ def load_config(path: Path) -> Config:
             detect_path=str(cd.get("detect_path") or "/cam/realmonitor?channel=1&subtype=1"),
         ),
         lighting=LightingSettings(enabled=bool(lt.get("enabled", True))),
+        web=WebSettings(
+            enabled=bool(wb.get("enabled", True)),
+            port=int(wb.get("port", 8090)),
+            retention_days=int(wb.get("retention_days", 30)),
+        ),
         heartbeat=heartbeat,
     )

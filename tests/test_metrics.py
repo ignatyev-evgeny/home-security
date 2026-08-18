@@ -1,0 +1,110 @@
+"""История телеметрии: запись, ретеншн, прореживание и страница."""
+import asyncio, os, sys, tempfile, time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "guard"))
+os.environ.update(BOT_TOKEN="1:F", FRIGATE_PASSWORD="", CAM_PASSWORD="s",
+                  WATCHDOG_URL="https://x/hb", WATCHDOG_TOKEN="t")
+
+from aiohttp.test_utils import TestServer
+from aiohttp import ClientSession
+
+from app.config import load_config
+from app.metrics import Metrics
+from app.web import build_app
+from app.guard import inference_from_stats
+
+tmp = Path(tempfile.mkdtemp())
+p = tmp / "c.yaml"
+p.write_text((ROOT / "guard/config.example.yaml").read_text().replace("- 000000000", "- 42"))
+cfg = load_config(p)
+assert cfg.web.enabled and cfg.web.port == 8090 and cfg.web.retention_days == 30
+print("конфиг: порт", cfg.web.port, "хранение", cfg.web.retention_days, "дней")
+
+# разбор скорости детектора
+assert inference_from_stats({"detectors": {"ov": {"inference_speed": 9.91}}}) == 9.91
+assert inference_from_stats({"detectors": {}}) is None
+assert inference_from_stats({}) is None
+print("скорость детектора разбирается")
+
+
+class FakeGuard:
+    camera_health = {"a": {"online": True}, "b": {"online": True}, "c": {"online": False}}
+    storage = {"free_gb": 375.0}
+    inference_ms = 9.9
+    armed = True
+
+
+async def main():
+    m = Metrics(tmp / "m.db", retention_days=30)
+
+    # пустая база не роняет запросы
+    assert await m.history(30) == []
+    print("пустая история отдаётся как пустой список")
+
+    snap = {"temps": {"CPU": 67.0, "диск": 45.0}, "load": (4.9, 4.6, 4.8),
+            "memory": {"used_pct": 26}, "cpus": 8}
+    await m.sample(snap, FakeGuard())
+    rows = await m.history(1)
+    assert len(rows) == 1, rows
+    r = rows[0]
+    assert (r["cpu_temp"], r["disk_temp"], r["load1"], r["mem_pct"]) == (67.0, 45.0, 4.9, 26)
+    assert r["free_gb"] == 375.0 and r["inference"] == 9.9
+    assert r["cameras_ok"] == 2 and r["armed"] == 1
+    print("замер записан:", {k: r[k] for k in ("cpu_temp", "load1", "cameras_ok", "armed")})
+
+    # недоступные источники не ломают запись
+    await asyncio.sleep(0)
+    m._write({"ts": int(time.time()) + 1, "cpu_temp": None, "disk_temp": None, "load1": None,
+              "mem_pct": None, "free_gb": None, "inference": None, "cameras_ok": None, "armed": 0})
+    rows = await m.history(1)
+    assert len(rows) == 2 and rows[-1]["cpu_temp"] is None
+    print("пропуски пишутся как NULL, а не как ноль")
+
+    # ретеншн: старые замеры удаляются при следующей записи.
+    # Сеем напрямую — _write чистит старое в той же транзакции, что и вставляет,
+    # поэтому через него засеять «прошлое» нельзя, и это правильное поведение.
+    old = int(time.time()) - 40 * 86400
+    import sqlite3
+    with sqlite3.connect(tmp / "m.db") as db:
+        db.execute("INSERT INTO samples (ts, cpu_temp, load1) VALUES (?, ?, ?)", (old, 50.0, 1.0))
+    assert any(r["ts"] == old for r in await m.history(90)), "тестовая старая запись не легла"
+    await m.sample(snap, FakeGuard())            # запись запускает чистку
+    assert not any(r["ts"] == old for r in await m.history(90)), "ретеншн не сработал"
+    print("замеры старше 30 дней удаляются")
+
+    # прореживание: браузеру не отдаём десятки тысяч точек
+    base = int(time.time()) - 3600
+    for i in range(3000):
+        m._write({"ts": base + i, "cpu_temp": 60.0 + (i % 10), "disk_temp": None, "load1": 1.0,
+                  "mem_pct": 20, "free_gb": 300.0, "inference": 9.0, "cameras_ok": 7, "armed": 0})
+    rows = await m.history(1, limit=500)
+    assert len(rows) == 500, len(rows)
+    assert rows[0]["ts"] < rows[-1]["ts"], "порядок нарушен"
+    print(f"прореживание: 3000 замеров -> {len(rows)} точек, порядок сохранён")
+
+    # --- страница и API ---
+    server = TestServer(build_app(m)); await server.start_server()
+    base_url = f"http://127.0.0.1:{server.port}"
+    async with ClientSession() as s:
+        async with s.get(f"{base_url}/") as r:
+            html = await r.text()
+            assert r.status == 200 and r.content_type == "text/html"
+        for needle in ("Телеметрия сервера", "cpu_temp", "api/metrics", "30 дней"):
+            assert needle in html, needle
+        assert "http://" not in html.split("<script>")[1], "страница тянет что-то извне"
+        print("страница отдаётся, внешних зависимостей нет")
+
+        async with s.get(f"{base_url}/api/metrics?days=1") as r:
+            data = await r.json()
+            assert r.status == 200 and isinstance(data, list) and data
+        # некорректный параметр не роняет
+        for q in ("days=abc", "days=-5", "days=99999", ""):
+            async with s.get(f"{base_url}/api/metrics?{q}") as r:
+                assert r.status == 200, (q, r.status)
+        print("API отвечает и не падает на мусорных параметрах")
+    await server.close()
+
+asyncio.run(main())
+print("\nMETRICS OK")
