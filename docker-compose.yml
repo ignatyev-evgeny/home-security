@@ -3,6 +3,7 @@ services:
     image: eclipse-mosquitto:2
     container_name: mosquitto
     restart: unless-stopped
+    mem_limit: 512m
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data
@@ -64,6 +65,9 @@ services:
     build: ./guard
     container_name: home-guard
     restart: unless-stopped
+    # Скромный потолок: обычно бот держится в 200 МБ, запас нужен лишь на
+    # клип, который он выкачивает в память перед отправкой в Telegram.
+    mem_limit: 2g
     depends_on:
       - mosquitto
       - frigate
