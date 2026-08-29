@@ -17,6 +17,9 @@ MONITOR_INTERVAL = 30.0
 # Один нулевой замер ловится штатно при перезапуске ffmpeg внутри Frigate и
 # падением не является — без этого порога каждый рестарт даёт ложную тревогу.
 OFFLINE_STREAK = 3
+# Отпускаем тревогу по памяти не на самом пороге, а ниже: около границы
+# показание колеблется, и без запаса бот слал бы пары «тревога/норма».
+MEM_HYSTERESIS = 5.0
 # Потолок Telegram на файл, отправляемый ботом.
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024
 
@@ -104,6 +107,7 @@ class Guard:
         self._followups: dict[str, asyncio.Task] = {}
         self._frigate_reported_down = False
         self._low_disk_reported = False
+        self._high_mem_reported = False
         self._disk_problems_reported: set[str] = set()
         self._background: set[asyncio.Task] = set()
 
@@ -306,6 +310,9 @@ class Guard:
                 await self._check_disks()
                 if self._config.alerts.notify_offline:
                     await self._report_transitions(health)
+            # Вне ветки else намеренно: память надо мерить и тогда, когда
+            # Frigate не отвечает. Именно в этом состоянии он и течёт.
+            await self._check_memory()
             await asyncio.sleep(MONITOR_INTERVAL)
 
     def _apply_streaks(self, health: dict[str, dict]) -> None:
@@ -360,6 +367,32 @@ class Guard:
         if self._disk_problems_reported and not problems:
             await self._notifier.text("✅ Претензий к дискам по SMART больше нет.")
         self._disk_problems_reported = problems
+
+    async def _check_memory(self) -> None:
+        """Предупреждает, пока память ещё есть.
+
+        Течь может любой контейнер, а без лимита памяти утечка забирает не свой
+        процесс, а всю машину: ядро уходит в своп, и сервер перестаёт отвечать
+        целиком — вместе с этим ботом, который и должен был предупредить.
+        Поэтому порог низкий: важно не «уже беда», а «через пару часов будет».
+        """
+        limit = self._config.alerts.max_mem_pct
+        mem = system.memory()
+        if not limit or not mem:
+            return
+        used = mem["used_pct"]
+        if used >= limit and not self._high_mem_reported:
+            self._high_mem_reported = True
+            await self._notifier.text(
+                f"⚠️ Память занята на {used}% — {mem['used_gb']} из {mem['total_gb']} ГБ "
+                f"(порог {limit:g}%).\n"
+                "Похоже на утечку. Когда память кончится, сервер перестанет отвечать "
+                "целиком, включая этого бота. Посмотри график памяти на странице "
+                "телеметрии и перезапусти виновный контейнер."
+            )
+        elif used < limit - MEM_HYSTERESIS and self._high_mem_reported:
+            self._high_mem_reported = False
+            await self._notifier.text(f"✅ Память в норме: занято {used}%.")
 
     @property
     def armed(self) -> bool:

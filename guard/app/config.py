@@ -66,6 +66,10 @@ class AlertSettings:
     event_snapshot: bool = True
     # Порог свободного места на разделе с записями, ГБ. 0 — не следить.
     min_free_gb: float = 20.0
+    # Порог занятой памяти, %. Течь может любой контейнер, и без лимита утечка
+    # кладёт весь сервер целиком. Норма этой машины — 25-30%, так что 70 даёт
+    # запас в несколько часов и не даёт ложных тревог. 0 — не следить.
+    max_mem_pct: float = 70.0
 
 
 @dataclass(frozen=True)
@@ -184,6 +188,7 @@ def load_config(path: Path) -> Config:
             snapshot_quality=int(al.get("snapshot_quality", 95)),
             event_snapshot=bool(al.get("event_snapshot", True)),
             min_free_gb=float(al.get("min_free_gb", 20.0)),
+            max_mem_pct=float(al.get("max_mem_pct", 70.0)),
         ),
         camera_defaults=CameraDefaults(
             username=str(cd.get("username") or "admin"),

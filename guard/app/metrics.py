@@ -120,7 +120,10 @@ class Metrics:
             "mem_pct": mem.get("used_pct"),
             "free_gb": (guard.storage or {}).get("free_gb"),
             "inference": guard.inference_ms,
-            "cameras_ok": sum(1 for v in health.values() if v.get("online")) or None,
+            # Ноль живых камер — это факт, а не отсутствие данных: `or None`
+            # рисовал на графике разрыв ровно там, где всё и упало.
+            "cameras_ok": (sum(1 for v in health.values() if v.get("online"))
+                           if health else None),
             "armed": 1 if guard.armed else 0,
         }
         async with self._lock:
