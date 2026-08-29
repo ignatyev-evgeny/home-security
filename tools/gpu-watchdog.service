@@ -1,0 +1,7 @@
+[Unit]
+Description=Перезагрузка при намертво зависшем видеоядре
+Documentation=https://github.com/ignatyev-evgeny/home-security
+
+[Service]
+Type=oneshot
+ExecStart=/home/developer/docker/home-security/tools/gpu-watchdog.py
