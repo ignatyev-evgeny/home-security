@@ -17,7 +17,7 @@ SAMPLE_INTERVAL = 60.0
 PROBE_INTERVAL = 5.0
 
 FIELDS = ("ts", "cpu_temp", "cpu_min", "cpu_max", "disk_temp", "fan_rpm", "load1",
-          "mem_pct", "free_gb", "inference", "cameras_ok", "armed")
+          "mem_pct", "free_gb", "inference", "gpu_pct", "cameras_ok", "armed")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -31,10 +31,16 @@ CREATE TABLE IF NOT EXISTS samples (
     mem_pct     REAL,
     free_gb     REAL,
     inference   REAL,
+    gpu_pct     REAL,   -- загрузка видеоядра, %
     cameras_ok  INTEGER,
     armed       INTEGER
 );
 """
+
+# Собираем из FIELDS, а не пишем руками: список колонок и так живёт в схеме,
+# третья копия рано или поздно разойдётся с остальными.
+_INSERT = ("INSERT OR REPLACE INTO samples (%s) VALUES (%s)"
+           % (", ".join(FIELDS), ", ".join(":" + f for f in FIELDS)))
 
 
 class Metrics:
@@ -53,7 +59,7 @@ class Metrics:
             db.executescript(_SCHEMA)
             # База могла быть создана прежней версией без колонок разброса.
             have = {r[1] for r in db.execute("PRAGMA table_info(samples)")}
-            for column in ("cpu_min", "cpu_max", "fan_rpm"):
+            for column in ("cpu_min", "cpu_max", "fan_rpm", "gpu_pct"):
                 if column not in have:
                     db.execute(f"ALTER TABLE samples ADD COLUMN {column} REAL")
                     log.info("в историю добавлена колонка %s", column)
@@ -70,14 +76,7 @@ class Metrics:
         row = {k: row.get(k) for k in FIELDS}
         cutoff = int(time.time() - self._retention * 86400)
         with self._connect() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO samples "
-                "(ts, cpu_temp, cpu_min, cpu_max, disk_temp, fan_rpm, load1, mem_pct, "
-                " free_gb, inference, cameras_ok, armed) "
-                "VALUES (:ts, :cpu_temp, :cpu_min, :cpu_max, :disk_temp, :fan_rpm, :load1, "
-                ":mem_pct, :free_gb, :inference, :cameras_ok, :armed)",
-                row,
-            )
+            db.execute(_INSERT, row)
             db.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
 
     def _read(self, since: float, limit: int) -> list[dict]:
@@ -120,6 +119,10 @@ class Metrics:
             "mem_pct": mem.get("used_pct"),
             "free_gb": (guard.storage or {}).get("free_gb"),
             "inference": guard.inference_ms,
+            # Декодирование всех камер и детектор живут на одном видеоядре,
+            # и его загрузка — единственная величина, по которой видно,
+            # сколько запаса осталось до срыва.
+            "gpu_pct": getattr(guard, "gpu_pct", None),
             # Ноль живых камер — это факт, а не отсутствие данных: `or None`
             # рисовал на графике разрыв ровно там, где всё и упало.
             "cameras_ok": (sum(1 for v in health.values() if v.get("online"))

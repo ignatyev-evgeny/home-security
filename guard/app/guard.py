@@ -71,6 +71,24 @@ def inference_from_stats(stats: dict) -> float | None:
     return None
 
 
+def gpu_from_stats(stats: dict) -> float | None:
+    """Загрузка видеоядра в процентах.
+
+    Frigate отдаёт её строкой вида "43.15%", а когда счётчики недоступны —
+    прочерком. Прочерк считаем отсутствием данных, а не нулём: ноль означал
+    бы простаивающее видеоядро, а это совсем другое утверждение.
+    """
+    for data in (stats.get("gpu_usages") or {}).values():
+        raw = (data or {}).get("gpu")
+        if not isinstance(raw, str):
+            continue
+        try:
+            return round(float(raw.strip().rstrip("%")), 1)
+        except ValueError:
+            continue
+    return None
+
+
 def cameras_from_stats(stats: dict) -> dict[str, dict]:
     """Состояние камер из /api/stats.
 
@@ -102,6 +120,7 @@ class Guard:
         self.camera_health: dict[str, dict] = {}
         self.storage: dict = {}
         self.inference_ms: float | None = None
+        self.gpu_pct: float | None = None
         self.frigate_ok = False
 
         self._last_alert: dict[str, float] = {}
@@ -311,6 +330,7 @@ class Guard:
                 self.camera_health = health
                 self.storage = storage_from_stats(stats)
                 self.inference_ms = inference_from_stats(stats)
+                self.gpu_pct = gpu_from_stats(stats)
                 await self._check_storage()
                 await self._check_disks()
                 if self._config.alerts.notify_offline:

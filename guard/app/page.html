@@ -74,6 +74,8 @@ const CHARTS = [
   {id:"load", title:"Нагрузка и память", unit:"",
    series:[{key:"load1", name:"load average", color:"var(--warn)", unit:""},
            {key:"mem_pct", name:"память", color:"var(--ok)", unit:"%"}]},
+  {id:"gpu", title:"Видеоядро", unit:"%", optional:true,
+   series:[{key:"gpu_pct", name:"загрузка", color:"var(--warn)", unit:"%"}]},
   {id:"det", title:"Детектор и камеры", unit:"",
    series:[{key:"inference", name:"инференс", color:"var(--accent)", unit:"мс"},
            {key:"cameras_ok", name:"камер на связи", color:"var(--ok)", unit:""}]},

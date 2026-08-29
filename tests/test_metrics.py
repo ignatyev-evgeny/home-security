@@ -13,7 +13,7 @@ from aiohttp import ClientSession
 from app.config import load_config
 from app.metrics import Metrics
 from app.web import build_app
-from app.guard import inference_from_stats
+from app.guard import inference_from_stats, gpu_from_stats
 
 tmp = Path(tempfile.mkdtemp())
 p = tmp / "c.yaml"
@@ -28,11 +28,21 @@ assert inference_from_stats({"detectors": {}}) is None
 assert inference_from_stats({}) is None
 print("скорость детектора разбирается")
 
+# загрузка видеоядра: Frigate отдаёт её строкой с процентом
+assert gpu_from_stats({"gpu_usages": {"intel-vaapi": {"gpu": "43.15%"}}}) == 43.1
+assert gpu_from_stats({"gpu_usages": {"intel-vaapi": {"gpu": "0.0%"}}}) == 0.0
+# прочерк и пустая строка — это «счётчики недоступны», а не «видеоядро простаивает»
+for bad in ("-%", "", "n/a", None, 42):
+    assert gpu_from_stats({"gpu_usages": {"intel-vaapi": {"gpu": bad}}}) is None, bad
+assert gpu_from_stats({}) is None and gpu_from_stats({"gpu_usages": {}}) is None
+print("загрузка видеоядра разбирается, недоступные счётчики не превращаются в ноль")
+
 
 class FakeGuard:
     camera_health = {"a": {"online": True}, "b": {"online": True}, "c": {"online": False}}
     storage = {"free_gb": 375.0}
     inference_ms = 9.9
+    gpu_pct = 43.1
     armed = True
 
 
@@ -53,7 +63,7 @@ async def main():
     # нагрузка округляется: сырое os.getloadavg() даёт 5.52197265625
     await m.sample({**snap, "load": (5.52197265625, 1.0, 1.0)}, FakeGuard())
     assert (await m.history(1))[-1]["load1"] == 5.52, (await m.history(1))[-1]["load1"]
-    assert r["free_gb"] == 375.0 and r["inference"] == 9.9
+    assert r["free_gb"] == 375.0 and r["inference"] == 9.9 and r["gpu_pct"] == 43.1
     assert r["cameras_ok"] == 2 and r["armed"] == 1
     print("замер записан:", {k: r[k] for k in ("cpu_temp", "load1", "cameras_ok", "armed")})
 
@@ -124,6 +134,7 @@ async def main():
             html = await r.text()
             assert r.status == 200 and r.content_type == "text/html"
         for needle in ("Телеметрия сервера", "cpu_temp", "cpu_min", "cpu_max", "fan_rpm",
+                       "gpu_pct", "Видеоядро",
                        "api/metrics", "30 дней", "разброс",
                        "pointermove", "выдели участок"):
             assert needle in html, needle
@@ -140,6 +151,29 @@ async def main():
                 assert r.status == 200, (q, r.status)
         print("API отвечает и не падает на мусорных параметрах")
     await server.close()
+
+    # --- база, созданная прежней версией -----------------------------------
+    # На сервере лежат десятки тысяч замеров без новых колонок: миграция
+    # обязана добавить их, не тронув накопленное.
+    old_db = tmp / "old.db"
+    import sqlite3 as sq
+    with sq.connect(old_db) as db:
+        db.execute("CREATE TABLE samples (ts INTEGER PRIMARY KEY, cpu_temp REAL, "
+                   "disk_temp REAL, load1 REAL, mem_pct REAL, free_gb REAL, "
+                   "inference REAL, cameras_ok INTEGER, armed INTEGER)")
+        db.execute("INSERT INTO samples (ts, cpu_temp, load1) VALUES (?, ?, ?)",
+                   (int(time.time()) - 60, 55.5, 3.3))
+    m2 = Metrics(old_db, retention_days=30)
+    cols = {r[1] for r in sq.connect(old_db).execute("PRAGMA table_info(samples)")}
+    for new in ("cpu_min", "cpu_max", "fan_rpm", "gpu_pct"):
+        assert new in cols, f"колонка {new} не добавлена при миграции"
+    old_rows = await m2.history(1)
+    assert len(old_rows) == 1 and old_rows[0]["cpu_temp"] == 55.5, old_rows
+    assert old_rows[0]["gpu_pct"] is None, "у старых замеров новой величины быть не может"
+    # и запись в мигрированную базу работает
+    await m2.sample(snap, FakeGuard(), [60.0])
+    assert (await m2.history(1))[-1]["gpu_pct"] == 43.1
+    print("старая база мигрирует: колонки добавлены, накопленное цело")
 
 asyncio.run(main())
 print("\nMETRICS OK")
