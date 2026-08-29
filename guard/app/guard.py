@@ -20,6 +20,10 @@ OFFLINE_STREAK = 3
 # Отпускаем тревогу по памяти не на самом пороге, а ниже: около границы
 # показание колеблется, и без запаса бот слал бы пары «тревога/норма».
 MEM_HYSTERESIS = 5.0
+# Сколько камер должно смениться разом, чтобы слать сводку вместо россыпи
+# отдельных сообщений. Одна-две — это правда про камеры; больше — про общую
+# причину, и тогда семь сообщений только мешают её увидеть.
+BULK_THRESHOLD = 2
 # Потолок Telegram на файл, отправляемый ботом.
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024
 
@@ -108,6 +112,7 @@ class Guard:
         self._frigate_reported_down = False
         self._low_disk_reported = False
         self._high_mem_reported = False
+        self._gpu_reported = False
         self._disk_problems_reported: set[str] = set()
         self._background: set[asyncio.Task] = set()
 
@@ -313,6 +318,7 @@ class Guard:
             # Вне ветки else намеренно: память надо мерить и тогда, когда
             # Frigate не отвечает. Именно в этом состоянии он и течёт.
             await self._check_memory()
+            await self._check_gpu()
             await asyncio.sleep(MONITOR_INTERVAL)
 
     def _apply_streaks(self, health: dict[str, dict]) -> None:
@@ -394,6 +400,31 @@ class Guard:
             self._high_mem_reported = False
             await self._notifier.text(f"✅ Память в норме: занято {used}%.")
 
+    async def _check_gpu(self) -> None:
+        """Ловит срыв встроенного видеоядра.
+
+        Аппаратное декодирование всех камер и сам детектор живут на одной
+        встроенной графике. Когда она зависает, разом умирает всё, а ядро до
+        перезагрузки безуспешно пытается её сбросить — раз в три секунды,
+        часами. Само это не рассасывается, и знать надо сразу.
+        """
+        if self._gpu_reported or system.gpu_error() is not True:
+            return
+        self._gpu_reported = True
+        total = len(self.camera_health)
+        dead = [n for n, i in self.camera_health.items() if not i.get("stable", True)]
+        if dead:
+            await self._notifier.text(
+                "🛑 <b>Сорвалось видеоядро.</b>\n"
+                f"Аппаратное декодирование не работает, камер без потока: {len(dead)} из "
+                f"{total}. Само не починится — нужна перезагрузка сервера."
+            )
+        else:
+            await self._notifier.text(
+                "⚠️ Видеоядро срывалось, но обошлось — камеры отдают поток.\n"
+                "Если повторится, стоит снять с него нагрузку: перевести detect на субпотоки."
+            )
+
     @property
     def armed(self) -> bool:
         return bool(self._state.armed)
@@ -405,14 +436,39 @@ class Guard:
         return bool(limit and free is not None and free < limit)
 
     async def _report_transitions(self, health: dict[str, dict]) -> None:
-        for name, info in health.items():
-            if not info["stable"] and name not in self._offline_reported:
-                self._offline_reported.add(name)
+        """Сообщает о переходах камер, схлопывая массовые.
+
+        При срыве видеоядра камеры отваливаются все разом, и россыпь из семи
+        сообщений (а вместе со сторожем — четырнадцати) прячет главное:
+        случилось одно общее событие, а не семь независимых.
+        """
+        went_down = sorted(n for n, i in health.items()
+                           if not i["stable"] and n not in self._offline_reported)
+        came_up = sorted(n for n, i in health.items()
+                         if i["stable"] and n in self._offline_reported)
+        self._offline_reported |= set(went_down)
+        self._offline_reported -= set(came_up)
+
+        if len(went_down) > BULK_THRESHOLD:
+            await self._notifier.text(
+                f"⚠️ Разом отвалились {len(went_down)} камер: "
+                f"{', '.join(html.escape(n) for n in went_down)}.\n"
+                "Столько сразу — это не камеры, а общая причина: видеоядро, сеть или Frigate."
+            )
+        else:
+            for name in went_down:
                 await self._notifier.text(
-                    f"⚠️ Камера <b>{html.escape(name)}</b> не отдаёт поток — движение с неё не отслеживается."
+                    f"⚠️ Камера <b>{html.escape(name)}</b> не отдаёт поток — "
+                    "движение с неё не отслеживается."
                 )
-            elif info["stable"] and name in self._offline_reported:
-                self._offline_reported.discard(name)
+
+        if len(came_up) > BULK_THRESHOLD:
+            await self._notifier.text(
+                f"✅ Снова на связи {len(came_up)} камер: "
+                f"{', '.join(html.escape(n) for n in came_up)}."
+            )
+        else:
+            for name in came_up:
                 await self._notifier.text(f"✅ Камера <b>{html.escape(name)}</b> снова на связи.")
 
     async def shutdown(self) -> None:

@@ -10,6 +10,9 @@ log = logging.getLogger(__name__)
 
 THERMAL = Path("/sys/class/thermal")
 HWMON = Path("/sys/class/hwmon")
+DRM = Path("/sys/class/drm")
+# Ответ i915, когда срывов не было.
+NO_GPU_ERROR = "no error state collected"
 # Сводку SMART готовит tools/smart-export.py на хосте: контейнеру не нужен
 # доступ к дисковым устройствам, он лишь читает готовый файл.
 SMART_FILE = Path(os.environ.get("SMART_FILE", "data/smart.json"))
@@ -137,6 +140,34 @@ def fans() -> dict[str, int]:
             label = _read(path.with_name(path.name.replace("_input", "_label")))
             found[label or path.name.replace("_input", "")] = rpm
     return found
+
+
+def gpu_error() -> bool | None:
+    """Срывалось ли встроенное видеоядро с момента загрузки.
+
+    При зависании i915 складывает дамп состояния в card*/error и держит его
+    там до перезагрузки. Из контейнера это единственный доступный признак:
+    сообщения ядра видны только в журнале хоста, а его нам не подмонтировать.
+
+    None — выяснить не удалось (нет файла или прав); это не то же самое,
+    что «срывов не было», и тревожить на этом основании нельзя.
+    """
+    try:
+        cards = sorted(DRM.glob("card*/error"))
+    except OSError:
+        return None
+    checked = False
+    for path in cards:
+        try:
+            # Дамп бывает в мегабайты, а решает первая строка — читаем начало.
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                head = fh.read(200)
+        except OSError:
+            continue
+        checked = True
+        if head.strip() and NO_GPU_ERROR not in head.lower():
+            return True
+    return False if checked else None
 
 
 def temperatures() -> dict[str, float]:
