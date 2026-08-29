@@ -31,6 +31,20 @@ services:
     devices:
       # Встроенная графика: VAAPI-декодирование и OpenVINO-детекция.
       - /dev/dri/renderD128:/dev/dri/renderD128
+    cap_add:
+      # Счётчики производительности видеоядра — от них зависят графики загрузки
+      # GPU в веб-интерфейсе Frigate. Одного этого права мало: у Debian есть
+      # своя заплата, из-за которой при kernel.perf_event_paranoid = 3 доступ
+      # закрыт всем, кроме CAP_SYS_ADMIN. Поэтому на хосте настройка ослаблена
+      # до 1, а контейнеру выдано узкое право — вместе они дают доступ, не
+      # раздавая Frigate прав уровня root.
+      #
+      #   echo 'kernel.perf_event_paranoid = 1' | sudo tee /etc/sysctl.d/99-perf-gpu.conf
+      #   sudo sysctl --system
+      #
+      # Без этой настройки на хосте право просто не сработает, но и вреда не
+      # принесёт: Frigate запишет в лог, что счётчики недоступны, и всё.
+      - PERFMON
     volumes:
       - /etc/localtime:/etc/localtime:ro
       # Весь /config, а не только config.yml: тут лежат база событий, кэш
