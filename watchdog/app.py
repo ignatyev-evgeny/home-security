@@ -17,6 +17,9 @@ from aiohttp import ClientError, ClientSession, web
 
 log = logging.getLogger("watchdog")
 
+# Столько одновременных падений схлопывается в сводку: разом отвалившиеся
+# камеры — общая причина, и россыпь сообщений её только прячет.
+BULK_THRESHOLD = 2
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_IDS = tuple(int(x) for x in os.environ.get("CHAT_IDS", "").replace(" ", "").split(",") if x)
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
@@ -142,10 +145,23 @@ async def handle_heartbeat(request: web.Request) -> web.Response:
         for name, info in cameras.items()
         if not (info or {}).get("stable", (info or {}).get("online"))
     }
-    for name in sorted(now_down - watch.cameras_down):
-        await notify(session, f"⚠️ <b>{site}</b>: камера <code>{name}</code> не отдаёт поток.")
-    for name in sorted(watch.cameras_down - now_down):
-        if name in cameras:
+    went_down = sorted(now_down - watch.cameras_down)
+    came_up = [n for n in sorted(watch.cameras_down - now_down) if n in cameras]
+
+    # Разом отвалившиеся камеры — одно событие, а не семь. Дом присылает про них
+    # свою сводку; если бы сторож слал ещё и по сообщению на камеру, на общую
+    # причину пришлось бы четырнадцать сообщений вместо двух.
+    if len(went_down) > BULK_THRESHOLD:
+        await notify(session, f"⚠️ <b>{site}</b>: разом отвалились {len(went_down)} камер: "
+                              f"<code>{', '.join(went_down)}</code>.")
+    else:
+        for name in went_down:
+            await notify(session, f"⚠️ <b>{site}</b>: камера <code>{name}</code> не отдаёт поток.")
+
+    if len(came_up) > BULK_THRESHOLD:
+        await notify(session, f"✅ <b>{site}</b>: снова на связи {len(came_up)} камер.")
+    else:
+        for name in came_up:
             await notify(session, f"✅ <b>{site}</b>: камера <code>{name}</code> снова на связи.")
     watch.cameras_down = now_down
 

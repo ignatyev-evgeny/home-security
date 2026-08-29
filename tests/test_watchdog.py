@@ -24,6 +24,11 @@ def hb(cameras, frigate_ok=True, armed=True):
 
 UP = {"cam_110": {"online": True}, "cam_111": {"online": True}}
 DOWN = {"cam_110": {"online": True}, "cam_111": {"online": False}}
+# Семь камер, как дома. Срыв видеоядра роняет их все разом — именно так
+# и было 29.08.2026, и тогда пришло семь сообщений вместо одного.
+ALL7 = [f"cam_11{i}" for i in range(7)]
+SEVEN_UP = {n: {"online": True, "stable": True} for n in ALL7}
+SEVEN_DOWN = {n: {"online": False, "stable": False} for n in ALL7}
 
 async def main():
     server = TestServer(wd.build_app())
@@ -57,6 +62,23 @@ async def main():
             pass
         assert "снова на связи" in SENT[-1], SENT
         print("переходы камер OK:", len(SENT), "сообщения")
+
+        # массовое падение: одна сводка вместо семи сообщений
+        SENT.clear()
+        async with s.post(f"{base}/heartbeat", json=hb(SEVEN_UP), headers=H) as r:
+            pass
+        async with s.post(f"{base}/heartbeat", json=hb(SEVEN_DOWN), headers=H) as r:
+            pass
+        assert len(SENT) == 1, f"ожидалась одна сводка, пришло {len(SENT)}: {SENT}"
+        assert "разом отвалились 7 камер" in SENT[0], SENT[0]
+        assert all(n in SENT[0] for n in ALL7), "в сводке должны быть все имена"
+        print("массовое падение OK:", SENT[0][:80])
+
+        SENT.clear()
+        async with s.post(f"{base}/heartbeat", json=hb(SEVEN_UP), headers=H) as r:
+            pass
+        assert len(SENT) == 1 and "снова на связи 7 камер" in SENT[0], SENT
+        print("массовый возврат OK:", SENT[0])
 
         # Frigate упал и поднялся
         SENT.clear()
