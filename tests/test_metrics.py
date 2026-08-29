@@ -134,7 +134,7 @@ async def main():
             html = await r.text()
             assert r.status == 200 and r.content_type == "text/html"
         for needle in ("Телеметрия сервера", "cpu_temp", "cpu_min", "cpu_max", "fan_rpm",
-                       "gpu_pct", "Видеоядро",
+                       "gpu_pct", "Видеоядро", "видеоядро",
                        "api/metrics", "30 дней", "разброс",
                        "pointermove", "выдели участок"):
             assert needle in html, needle

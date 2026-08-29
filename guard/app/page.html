@@ -251,6 +251,7 @@ function cards() {
     ["вентилятор", has(r.fan_rpm) ? r.fan_rpm + " об/мин" : null],
     ["нагрузка", has(r.load1) ? r.load1 : null],
     ["память", has(r.mem_pct) ? r.mem_pct + " %" : null],
+    ["видеоядро", has(r.gpu_pct) ? r.gpu_pct + " %" : null],
     ["детектор", has(r.inference) ? r.inference + " мс" : null],
     ["свободно", has(r.free_gb) ? r.free_gb + " ГБ" : null],
   ];
