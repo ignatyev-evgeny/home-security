@@ -204,6 +204,10 @@ def disk_problems(smart_data: dict) -> list[str]:
     problems = []
     for name, d in (smart_data.get("disks") or {}).items():
         if d.get("error"):
+            # Пропускать молча нельзя: сломанный экспорт выглядел бы как диск
+            # без претензий, и слежение за дисками тихо переставало работать.
+            # Именно так оно и сломалось 02.09.2026 — cron не находил smartctl.
+            problems.append(f"{name}: SMART не читается — {str(d['error'])[:120]}")
             continue
         if d.get("passed") is False:
             problems.append(f"{name}: SMART сообщает о неисправности")

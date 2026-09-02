@@ -81,9 +81,15 @@ assert "устарели" in system.format_disks(s)
 print("протухшие данные помечаются, а не выдаются за свежие")
 
 # --- диск, который не отдал SMART ----------------------------------------------
+# Это не поломка диска — но и не «претензий нет». Это сломанное слежение, и
+# молчать о нём нельзя: 02.09.2026 экспорт полгода мог бы падать незаметно,
+# потому что ошибка опроса выглядела как здоровый диск.
 write({"sdb": {"error": "smartctl недоступен"}})
-assert system.disk_problems(system.smart()) == [], "ошибку опроса приняли за неисправность"
-print("недоступный SMART не считается поломкой")
+problems = system.disk_problems(system.smart())
+assert len(problems) == 1, problems
+assert "не читается" in problems[0], problems[0]
+assert "неисправност" not in problems[0], "это не утверждение о поломке диска"
+print("недоступный SMART сообщается как сломанное слежение:", problems[0])
 
 
 # --- предупреждения в Telegram --------------------------------------------------
@@ -118,4 +124,37 @@ async def main():
     await g.shutdown()
 
 asyncio.run(main())
+# --- сломанный экспорт обязан быть заметен ----------------------------------
+# 02.09.2026 cron не находил smartctl (он в /usr/sbin, которого нет в PATH
+# крона), файл писался с ошибкой вместо данных, а бот показывал «претензий
+# нет» — слежение за дисками тихо не работало.
+broken = {"disks": {
+    "nvme0n1": {"error": "[Errno 2] No such file or directory: 'smartctl'"},
+    "sda": {"error": "[Errno 2] No such file or directory: 'smartctl'"},
+}, "updated": time.time()}
+problems = system.disk_problems(broken)
+assert len(problems) == 2, problems
+assert all("не читается" in p for p in problems), problems
+print("нечитаемый SMART попадает в претензии:", problems[0][:70])
+
+line = system.format_disks(broken)
+assert line and "⚠️" in line, line
+print("и в строку /status:", line[:90])
+
+# смесь: один диск читается, другой нет — про второй всё равно скажем
+mixed = {"disks": {
+    "nvme0n1": {"passed": True, "temp": 38, "hours": 5639},
+    "sda": {"error": "нечитаемый ответ smartctl"},
+}, "updated": time.time()}
+problems = system.disk_problems(mixed)
+assert len(problems) == 1 and problems[0].startswith("sda:"), problems
+print("исправный диск не мешает заметить сломанный")
+
+# путь к smartctl определяется без надежды на PATH
+import importlib.util
+spec = importlib.util.spec_from_file_location("se", ROOT / "tools/smart-export.py")
+se = importlib.util.module_from_spec(spec); spec.loader.exec_module(se)
+assert se.SMARTCTL.endswith("smartctl"), se.SMARTCTL
+print("экспорт ищет smartctl явно:", se.SMARTCTL)
+
 print("\nSMART OK")

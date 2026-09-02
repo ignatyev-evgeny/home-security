@@ -11,6 +11,8 @@
     echo '*/15 * * * * /usr/bin/python3 /home/developer/docker/home-security/tools/smart-export.py' >> /tmp/cron
     sudo crontab /tmp/cron
 
+Отдельный PATH в crontab не нужен: скрипт сам находит smartctl в /usr/sbin.
+
 Путь вывода задаётся переменной SMART_OUT, по умолчанию — data/smart.json
 рядом с проектом.
 """
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -26,6 +29,14 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 OUT = Path(os.environ.get("SMART_OUT", PROJECT / "data" / "smart.json"))
+
+# smartctl живёт в /usr/sbin, а cron работает с PATH=/usr/bin:/bin — искать
+# программу по имени значит каждые 15 минут получать «файл не найден».
+# Ошибка тихая: файл при этом пишется, просто с ошибкой вместо данных.
+SMARTCTL = (shutil.which("smartctl")
+            or next((p for p in ("/usr/sbin/smartctl", "/sbin/smartctl",
+                                 "/usr/local/sbin/smartctl") if os.path.exists(p)),
+                    "smartctl"))
 
 # Атрибуты ATA, по которым видно деградацию поверхности.
 ATTRS = {
@@ -55,7 +66,7 @@ def devices() -> list[str]:
 def probe(name: str) -> dict | None:
     try:
         result = subprocess.run(
-            ["smartctl", "-H", "-A", "-i", "--json", f"/dev/{name}"],
+            [SMARTCTL, "-H", "-A", "-i", "--json", f"/dev/{name}"],
             capture_output=True,
             text=True,
             timeout=60,
