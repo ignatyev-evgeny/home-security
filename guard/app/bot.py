@@ -25,6 +25,7 @@ from .cameras import CameraEditError
 from .config import Config
 from .frigate import FrigateClient, FrigateError
 from .lighting import Lighting
+from . import fan
 from .state import ArmState
 
 log = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ HELP = (
     "/status — режим охраны\n"
     "/cams — список камер и их состояние\n"
     "/light — подсветка камер\n"
+    "/fan — режим вентилятора\n"
     "/photo — текущий кадр со всех камер\n"
     "/addcam <code>имя ip</code> — добавить камеру\n"
     "/delcam <code>имя</code> — удалить камеру\n"
@@ -60,7 +62,10 @@ def build_keyboard(armed: bool) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📸 Снимки", callback_data="photo"),
                 InlineKeyboardButton(text="📋 Камеры", callback_data="cams"),
             ],
-            [InlineKeyboardButton(text="💡 Подсветка", callback_data="light")],
+            [
+                InlineKeyboardButton(text="💡 Подсветка", callback_data="light"),
+                InlineKeyboardButton(text="🌀 Вентилятор", callback_data="fan"),
+            ],
         ]
     )
 
@@ -295,6 +300,46 @@ def register_handlers(
         if message.chat.id in allowed:
             await _send_all_frames(message)
 
+    async def _fan_view(message: Message, edit: bool) -> None:
+        """Меню вентилятора: текущий режим и три кнопки.
+
+        Режимы жёстко заданы железом: BIOS отдаёт управление обратно только
+        по записи нуля в pwm1, а ручных уровней у драйвера ровно два.
+        Выключение не предлагаем: останавливать вентилятор на машине,
+        которая держит охрану, — не та возможность, ради которой стоит
+        рисковать.
+        """
+        if not fan.available():
+            text = ("🌀 Управление вентилятором не настроено.\n"
+                    "На хосте не установлен исполнитель — см. README, "
+                    "раздел «Режим вентилятора».")
+            rows = [[InlineKeyboardButton(text="← Назад", callback_data="panel")]]
+        else:
+            data = fan.state()
+            current = data.get("mode") or "auto"
+            text = "🌀 <b>Вентилятор процессора</b>\n\n" + fan.describe(data)
+            rows = [[
+                InlineKeyboardButton(
+                    text=("✅ " if current == mode else "") + label,
+                    callback_data=f"fan_set:{mode}",
+                )
+                for mode, label in (("auto", "Авто"), ("low", "Низкий"), ("high", "Высокий"))
+            ], [InlineKeyboardButton(text="← Назад", callback_data="panel")]]
+
+        markup = InlineKeyboardMarkup(inline_keyboard=rows)
+        if edit:
+            try:
+                await message.edit_text(text, reply_markup=markup)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("меню вентилятора не обновлено: %s", exc)
+        else:
+            await message.answer(text, reply_markup=markup)
+
+    @dp.message(Command("fan"))
+    async def _fan_cmd(message: Message) -> None:
+        if message.chat.id in allowed:
+            await _fan_view(message, edit=False)
+
     @dp.message(Command("light"))
     async def _light_cmd(message: Message) -> None:
         if message.chat.id in allowed:
@@ -401,6 +446,31 @@ def register_handlers(
             await message.answer(f"⚠️ Не получить конфиг Frigate: {html.escape(str(exc))}")
             return
         await message.answer(admin.status_text(names, guard.camera_health, guard.frigate_ok, guard.storage))
+
+    @dp.callback_query(F.data == "fan")
+    async def _fan_button(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None or message.chat.id not in allowed:
+            await callback.answer("Доступ запрещён", show_alert=True)
+            return
+        await callback.answer()
+        await _fan_view(message, edit=True)
+
+    @dp.callback_query(F.data.startswith("fan_set:"))
+    async def _fan_set(callback: CallbackQuery) -> None:
+        message = callback.message
+        if message is None or message.chat.id not in allowed:
+            await callback.answer("Доступ запрещён", show_alert=True)
+            return
+        mode = (callback.data or "").partition(":")[2]
+        if not fan.request(mode):
+            await callback.answer("Не записать заявку", show_alert=True)
+            return
+        # Исполнитель на хосте подхватывает заявку по systemd .path, но железу
+        # нужно время: возврат к BIOS занимает около сорока секунд.
+        await callback.answer(f"Режим: {fan.NAMES.get(mode, mode)}. Применяю…")
+        await asyncio.sleep(3)
+        await _fan_view(message, edit=True)
 
     @dp.callback_query(F.data == "light")
     async def _light_button(callback: CallbackQuery) -> None:

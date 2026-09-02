@@ -1,0 +1,10 @@
+[Unit]
+Description=Заявка на смену режима вентилятора от бота
+
+[Path]
+# Срабатывает сразу, как бот положил заявку: ждать полминуты, пока дойдёт
+# очередь таймера, для команды из чата слишком долго.
+PathModified=/home/developer/docker/home-security/data/fan.request
+
+[Install]
+WantedBy=paths.target

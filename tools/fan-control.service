@@ -1,0 +1,7 @@
+[Unit]
+Description=Ручной режим вентилятора с возвратом к BIOS
+Documentation=https://github.com/ignatyev-evgeny/home-security
+
+[Service]
+Type=oneshot
+ExecStart=/home/developer/docker/home-security/tools/fan-control.py
