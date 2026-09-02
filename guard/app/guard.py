@@ -20,6 +20,11 @@ OFFLINE_STREAK = 3
 # Отпускаем тревогу по памяти не на самом пороге, а ниже: около границы
 # показание колеблется, и без запаса бот слал бы пары «тревога/норма».
 MEM_HYSTERESIS = 5.0
+# Температуру меряем мгновенно, а пакет процессора гуляет на 10-12 °C за
+# секунды: одиночный замер выше порога — это пик, а не перегрев. Тревожим
+# только когда превышение держится столько опросов подряд.
+TEMP_STREAK = 4
+TEMP_HYSTERESIS = 5.0
 # Сколько камер должно смениться разом, чтобы слать сводку вместо россыпи
 # отдельных сообщений. Одна-две — это правда про камеры; больше — про общую
 # причину, и тогда семь сообщений только мешают её увидеть.
@@ -132,6 +137,8 @@ class Guard:
         self._low_disk_reported = False
         self._high_mem_reported = False
         self._gpu_reported = False
+        self._hot_streak = 0
+        self._hot_reported = False
         self._disk_problems_reported: set[str] = set()
         self._background: set[asyncio.Task] = set()
 
@@ -339,6 +346,7 @@ class Guard:
             # Frigate не отвечает. Именно в этом состоянии он и течёт.
             await self._check_memory()
             await self._check_gpu()
+            await self._check_temp()
             await asyncio.sleep(MONITOR_INTERVAL)
 
     def _apply_streaks(self, health: dict[str, dict]) -> None:
@@ -443,6 +451,42 @@ class Guard:
             await self._notifier.text(
                 "⚠️ Видеоядро срывалось, но обошлось — камеры отдают поток.\n"
                 "Если повторится, стоит снять с него нагрузку: перевести detect на субпотоки."
+            )
+
+    async def _check_temp(self) -> None:
+        """Ловит перегрев процессора.
+
+        Единственный признак, по которому виден отказ вентилятора: обороты
+        показывает не всякое железо, а после замены кулера датчик может
+        замолчать совсем. Температура же есть всегда, и при вставшем
+        вентиляторе она уходит вверх за минуты.
+        """
+        limit = self._config.alerts.max_cpu_temp
+        value = (system.temperatures() or {}).get("CPU")
+        if not limit or value is None:
+            return
+        if value >= limit:
+            self._hot_streak += 1
+        elif value < limit - TEMP_HYSTERESIS:
+            self._hot_streak = 0
+
+        if self._hot_streak >= TEMP_STREAK and not self._hot_reported:
+            self._hot_reported = True
+            minutes = TEMP_STREAK * MONITOR_INTERVAL / 60
+            rpm = system.fans()
+            fan = (" · ".join(f"{k} {v} об/мин" for k, v in rpm.items()) if rpm
+                   else "датчик оборотов молчит")
+            await self._notifier.text(
+                f"🌡 <b>Процессор перегревается:</b> {value:.0f} °C уже "
+                f"{minutes:.0f} мин (порог {limit:g} °C).\n"
+                f"Вентилятор: {html.escape(fan)}.\n"
+                "Похоже на остановку вентилятора или забитый радиатор. "
+                "Ближе к 100 °C начнётся троттлинг, и детекция станет отставать."
+            )
+        elif self._hot_streak == 0 and self._hot_reported:
+            self._hot_reported = False
+            await self._notifier.text(
+                f"✅ Температура процессора в норме: {value:.0f} °C."
             )
 
     @property

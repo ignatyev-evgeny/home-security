@@ -70,6 +70,11 @@ class AlertSettings:
     # кладёт весь сервер целиком. Норма этой машины — 25-30%, так что 70 даёт
     # запас в несколько часов и не даёт ложных тревог. 0 — не следить.
     max_mem_pct: float = 70.0
+    # Порог температуры процессора, °C, по устойчивому превышению.
+    # Рабочий диапазон этой машины — 50-55 °C со скачками до 70, поэтому 80
+    # не даёт ложных тревог и оставляет запас до троттлинга около 100.
+    # 0 — не следить.
+    max_cpu_temp: float = 80.0
 
 
 @dataclass(frozen=True)
@@ -189,6 +194,7 @@ def load_config(path: Path) -> Config:
             event_snapshot=bool(al.get("event_snapshot", True)),
             min_free_gb=float(al.get("min_free_gb", 20.0)),
             max_mem_pct=float(al.get("max_mem_pct", 70.0)),
+            max_cpu_temp=float(al.get("max_cpu_temp", 80.0)),
         ),
         camera_defaults=CameraDefaults(
             username=str(cd.get("username") or "admin"),
