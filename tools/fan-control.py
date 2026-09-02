@@ -166,7 +166,8 @@ def main() -> int:
     error = None
     # Пишем в железо только при смене режима: каждая запись — это SMM-вызов,
     # а он останавливает все ядра. Дёргать его раз в полминуты без нужды незачем.
-    if previous.get("mode") != mode or previous.get("error"):
+    changed = previous.get("mode") != mode or previous.get("error")
+    if changed:
         error = apply(mode)
         if error:
             print(f"режим {mode} не применён: {error}", file=sys.stderr)
@@ -176,8 +177,11 @@ def main() -> int:
         measured = measure(hwmon())
 
     # note объясняет последний переход — почему режим стал таким, каким стал.
+    # settling говорит, что обороты сейчас показывать рано: вентилятор
+    # раскручивается секунд восемь, а тормозит все тридцать, и цифра в этот
+    # момент относится к прежнему режиму, а не к новому.
     save_state(mode=mode, until=(until if mode != "auto" else 0), ts=now,
-               note=note, error=error, **measured)
+               note=note, error=error, settling=bool(changed and not error), **measured)
     return 0
 
 

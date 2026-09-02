@@ -59,7 +59,9 @@ def describe(data: dict) -> str:
         return "Состояние вентилятора неизвестно — исполнитель на хосте не отвечает."
     mode = data.get("mode") or "auto"
     parts = [f"Режим: <b>{NAMES.get(mode, mode)}</b>"]
-    if data.get("rpm"):
+    if data.get("settling"):
+        parts.append("обороты подстраиваются")
+    elif data.get("rpm"):
         parts.append(f"{data['rpm']} об/мин")
     if data.get("temp") is not None:
         parts.append(f"процессор {data['temp']:.0f} °C")

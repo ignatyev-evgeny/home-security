@@ -121,6 +121,20 @@ fc.main()
 assert (dev / "cur_state").read_text() == "СТОРОЖ", "режим не менялся — писать в железо нельзя"
 print("при неизменном режиме запись в железо не повторяется")
 
+# --- подстройка оборотов ----------------------------------------------------
+# Сразу после смены режима цифра оборотов относится к прежнему режиму:
+# раскрутка занимает секунд восемь, торможение все тридцать.
+fc.STATE.unlink(missing_ok=True)
+st = run("high")
+assert st["settling"] is True, st
+assert "подстраиваются" in fan.describe(st) and "об/мин" not in fan.describe(st)
+fc.REQUEST.write_text(json.dumps({"mode": "high", "until": time.time() + 3600}))
+fc.main()
+st = json.loads(fc.STATE.read_text())
+assert st["settling"] is False, "на следующем прогоне обороты уже настоящие"
+assert "об/мин" in fan.describe(st)
+print("сразу после смены обороты не показываются, на следующем прогоне — да")
+
 # --- потолок срока ----------------------------------------------------------
 fc.STATE.unlink()
 st = run("high", until=time.time() + 99 * 86400)
